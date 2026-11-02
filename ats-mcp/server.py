@@ -12,6 +12,7 @@ from __future__ import annotations
 from mcp.server.mcpserver import MCPServer
 
 from config import get_mcp_settings
+from tools.jobs import register_tools as register_job_tools
 
 mcp = MCPServer(
     name="acmetech-ats",
@@ -28,6 +29,9 @@ mcp = MCPServer(
 def health() -> str:
     """Health check. Returns 'ok' when the ATS integration is reachable."""
     return "ok"
+
+
+register_job_tools(mcp)
 
 
 def main() -> None:

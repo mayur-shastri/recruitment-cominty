@@ -12,6 +12,8 @@ services:
       MCP_HOST: "0.0.0.0" # 127.0.0.1 would be unreachable from Caddy
       MCP_PORT: "8002"
       LOG_LEVEL: INFO
+    env_file:
+      - ../.env
     networks:
       - proxy
 

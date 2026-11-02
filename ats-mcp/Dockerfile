@@ -11,6 +11,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py config.py ./
+COPY tools ./tools
+COPY services ./services
 
 RUN useradd --create-home appuser && chown -R appuser /app
 USER appuser
