@@ -1,0 +1,567 @@
+# Cominty Python SDK
+
+[![PyPI](https://img.shields.io/pypi/v/cominty-sdk.svg)](https://pypi.org/project/cominty-sdk/)
+[![Python versions](https://img.shields.io/pypi/pyversions/cominty-sdk.svg)](https://pypi.org/project/cominty-sdk/)
+[![CI](https://github.com/cominty/python-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/cominty/python-sdk/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Official async Python client for the Cominty managed agent chat API.
+
+Start a conversation with an agent, stream its progress live, and manage threads
+with a small, fully-typed surface that's the same on Python 3.9 through 3.13.
+
+```python
+import asyncio
+from cominty_sdk import AsyncCominty
+
+
+async def main() -> None:
+    async with AsyncCominty() as client:  # reads COMINTY_API_KEY + COMINTY_USER_ID
+        run = await client.chat.start(
+            agent_id="__cominty_agents::agent.chat", message="What is Cominty?"
+        )
+        print(await run.text())
+
+
+asyncio.run(main())
+```
+
+- **Async-first**, built on `httpx`.
+- **Fully typed**: ships `py.typed`; strict-checked with pyright. Pydantic models everywhere.
+- **One handle for streaming *and* awaiting**: iterate a run for live progress
+  events, or just `await run.text()` for the final answer.
+- **Fail-fast validation**: bad parameters raise locally, before any request.
+- **Typed errors**: every failure is a `ComintyError` subclass.
+
+---
+
+## Requirements
+
+- **Python 3.9+**
+- A Cominty API key and your user id (see [Authentication](#authentication))
+
+## Installation
+
+```bash
+pip install cominty-sdk
+# or
+uv add cominty-sdk
+```
+
+## Authentication
+
+You need two things, both from [platform.cominty.ai](https://platform.cominty.ai):
+
+1. **API key** → [platform.cominty.ai/api-keys](https://platform.cominty.ai/api-keys) (shown once: copy it).
+2. **Your user id** → avatar (top right) → **Profile**. It looks like `user_31HPTBuBvX20xlQNAbvxjOxPbKB`.
+
+The user id identifies the end user every request acts on behalf of. It's set
+**once on the client** (or via `COMINTY_USER_ID`) and applied to every call.
+
+The simplest setup is environment variables:
+
+```bash
+export COMINTY_API_KEY="<your API key>"
+export COMINTY_USER_ID="user_..."
+```
+
+```python
+async with AsyncCominty() as client:  # picks both up from the environment
+    ...
+```
+
+…or pass them explicitly (explicit arguments win over the environment):
+
+```python
+client = AsyncCominty(api_token="<your API key>", user_id="user_...")
+```
+
+A malformed `user_id` is rejected at construction, not as a server error later.
+
+### Picking an agent
+
+Every chat call takes an `agent_id`. Browse your agents and copy an id at
+[platform.cominty.ai/agents](https://platform.cominty.ai/agents): they look
+like `__cominty_agents::agent.chat`.
+
+## Quick start
+
+Every conversation starts with `chat.start`, which returns a **run**: a handle
+to the assistant's in-progress reply. From there, pick the style you need.
+
+### Just get the answer
+
+```python
+run = await client.chat.start(agent_id=AGENT_ID, message="Give me one fun fact.")
+print(await run.text())  # blocks until the agent finishes
+```
+
+`await run.result()` gives the full `Message` (status, files, structured output,
+questions). `text()` is shorthand for `result().content`.
+
+### Stream progress events
+
+Iterating a run yields **progress events only** (tool calls, LLM steps, the
+result event) as they happen. The finished reply is captured for you.
+
+```python
+from cominty_sdk import events
+
+run = await client.chat.start(agent_id=AGENT_ID, message="Research X and summarize.")
+
+async for event in run:
+    if isinstance(event, events.ToolCall):
+        print(f"tool {event.data.name} -> {event.status}")
+    elif isinstance(event, events.LlmStep):
+        print(f"llm  {event.data.description}")
+    elif isinstance(event, events.Result):
+        print(f"cost {event.data.cost.total}")
+
+print("FINAL:", await run.text())  # available after the stream drains
+```
+
+> A run's stream is single-use: iterate it **or** await its result: the result
+> is cached, so calling `text()`/`result()` after iterating is free.
+
+### Continue the conversation
+
+`chat.send(thread_id, ...)` is the mirror of `start` for an existing thread:
+same arguments, same streamable run. The agent keeps the thread's context.
+
+```python
+first = await client.chat.start(agent_id=AGENT_ID, message="Pick a language.")
+await first.text()
+
+second = await client.chat.send(
+    first.thread.id,
+    agent_id=AGENT_ID,
+    message="Now show hello-world in it.",
+)
+print(await second.text())
+```
+
+### Answer the agent's questions
+
+When an agent needs more input, it ends its turn with clarifying **questions**
+(a `prompt` plus suggested `options`) instead of a final answer. Read them, then
+answer with a normal follow-up:
+
+```python
+run = await client.chat.start(agent_id=AGENT_ID, message="Book me a room.")
+await run.text()
+
+for q in await run.questions():
+    print(q.prompt, q.options)
+
+# answer = the chosen option (or free text)
+reply = await client.chat.send(run.thread.id, agent_id=AGENT_ID, message="Tomorrow 10am")
+print(await reply.text())
+```
+
+### Cap the agent's tool rounds
+
+`max_steps` limits how many tool rounds (web search, file write, ...) the agent
+may run for **one message**. Reaching it is not an error: the agent stops using
+tools, recaps, and asks whether to continue, and the message ends with
+`status="success"`. Continue with a normal follow-up.
+
+```python
+run = await client.chat.start(
+    agent_id=AGENT_ID, message="Research X, then write it up.", max_steps=5
+)
+await run.text()
+
+# The cap is per message: pass it again to keep it. Leaving it out runs with
+# the server default (60 today).
+reply = await client.chat.send(
+    run.thread.id, agent_id=AGENT_ID, message="Yes, continue.", max_steps=10
+)
+print(await reply.text())
+```
+
+Leave `max_steps` unset (or pass `SERVER_DEFAULT`) to omit it from the request.
+There is no "unlimited": `None` and integers below 1 raise `InvalidParams`. No
+field tells you the cap was hit, and the reply wording is model-written, so don't
+parse it. See [`examples/10_max_steps.py`](examples/10_max_steps.py).
+
+### Stop a message
+
+`chat.cancel(message_id)` stops an assistant message that is still being generated
+and returns it with `status` set to `cancelled`. It takes effect immediately, and
+what the agent produced so far stays in `events`.
+
+```python
+run = await client.chat.start(agent_id=AGENT_ID, message="Write a very long report.")
+
+async with run:  # closes the event stream when we leave the block
+    async for event in run:
+        if user_clicked_stop():
+            message = await client.chat.cancel(run.message_id)
+            print(message.status)  # MessageStatus.cancelled
+            break
+```
+
+Cancelling is not idempotent: a message that already finished, failed, or was
+already cancelled raises `APIError` (status 400, `"Message is not live"`), so a
+"stop" button should treat that error as "too late". An unknown message raises
+`NotFoundError`. See [`examples/12_cancel_message.py`](examples/12_cancel_message.py).
+
+### Export a message as a document
+
+`chat.export(message_id, format=...)` renders a finished message to a file and
+returns its bytes. `format` is `"pdf"` or `"docx"` (any other value raises
+`InvalidParams` before a request is sent).
+
+```python
+from pathlib import Path
+
+run = await client.chat.start(agent_id=AGENT_ID, message="Write a short product brief.")
+reply = await run.result()
+
+pdf = await client.chat.export(reply.id, format="pdf")
+Path("brief.pdf").write_bytes(pdf)
+```
+
+The server sends no file name, so pick one when you write the bytes. A message
+without content (for instance one still running) raises `APIError` (status 400,
+`"Message has no content"`). See
+[`examples/13_export_message.py`](examples/13_export_message.py).
+
+### Give the agent files
+
+`chat.upload_file` registers a file, and its `id` goes in `file_ids` (5 files per message at
+most). Pass raw bytes (then `filename` is required) or a `pathlib.Path` (the name and the
+mimetype are inferred from it, and both can still be overridden).
+
+```python
+from pathlib import Path
+
+report = await client.chat.upload_file(Path("q3-report.pdf"))
+data = await client.chat.upload_file(b"a,b\n1,2\n", filename="data.csv")
+
+run = await client.chat.start(
+    agent_id=AGENT_ID, message="Compare these two files.", file_ids=[report.id, data.id]
+)
+reply = await run.result()
+
+# Download any conversation file by id, including the ones the agent produced.
+# Keep only the last path segment: file names are not under your control.
+for file in reply.files:
+    Path(Path(file.name).name).write_bytes(await client.chat.download_file(file.id))
+```
+
+A plain `str` is rejected (`InvalidParams`): it would be ambiguous between a path and text, so
+wrap a path in `Path(...)`. The bytes go straight to the storage backend through a presigned
+URL: your API key is only ever sent to the Cominty API. A file is at most 500 MiB: a bigger one
+raises `InvalidParams` before anything is sent. The server also caps the number of uploads per
+day per organization, and another deployment may set a lower size limit; such a refusal raises
+`APIError` with the storage reason (for instance `EntityTooLarge`). The API has no way to delete or list uploaded files.
+Files are held in memory, in both directions. Error messages never show a presigned URL's
+signature, but `httpx` itself logs full request URLs at `INFO`: keep its logger at `WARNING`.
+See [`examples/14_upload_files.py`](examples/14_upload_files.py).
+
+### Manage threads
+
+`client.threads` is scoped to the client's `user_id` automatically.
+
+```python
+# List & search the user's conversations (summaries: no messages)
+for t in await client.threads.list(limit=20):
+    print(t.created_at, t.name, t.id)
+
+await client.threads.list(terms=["invoice"])  # free-text search
+await client.threads.list(limit=10, page=1)  # paginate (zero-based)
+
+# Load one thread's full history
+thread = await client.threads.get(thread_id)
+print(len(thread.messages))
+
+# Partial update: only the fields you pass change (returns a ThreadSummary)
+await client.threads.update(thread_id, name="Renamed", starred=True)
+
+# Archive (soft-delete)
+await client.threads.archive(thread_id)
+```
+
+### Memory files
+
+`client.memory` stores files an agent can read back later, scoped to a
+**namespace**: a bag name you choose. There's no call to create a namespace;
+the first `create()` against a new name brings that bag into existence.
+
+```python
+# Create a file. namespace is required on every call below.
+file = await client.memory.create(
+    path="tone.md", namespace="support-bot", purpose="writing style", content="Keep it casual."
+)
+
+# List files in one bag (summaries: no content). Omit namespace to list
+# every bag visible to this API key.
+for f in await client.memory.list(namespace="support-bot"):
+    print(f.path, f.purpose, f.version)
+
+# List every namespace that already has at least one file.
+await client.memory.list_namespaces()
+
+# Read one file's content
+file = await client.memory.get("tone.md", namespace="support-bot")
+
+# Partial update: only the fields you pass change. `version` guards against
+# overwriting a concurrent change: pass back the value from your last read,
+# and a stale one raises ConflictError (409).
+file = await client.memory.update(
+    "tone.md", namespace="support-bot", version=file.version, content="Keep it upbeat."
+)
+
+# Delete
+await client.memory.delete("tone.md", namespace="support-bot")
+```
+
+`version` is an opaque token: never parse or compare it, just round-trip
+whatever the API last gave you.
+
+There's currently no way to clear `content` or `purpose` once set: the API
+ignores an explicit `null` (leaves the existing value untouched), so
+`memory.update(..., content=None)` raises `InvalidParams` locally rather than
+sending a request that looks like it succeeded but did nothing.
+
+A few other things worth knowing:
+- `namespace` may be at most 128 characters. It's never trimmed: an empty or
+  whitespace-only value is sent to the API exactly as given.
+- `path` may have at most one folder segment: `"preferences/tone.md"` is
+  fine, `"a/b/tone.md"` isn't (raises `InvalidParams` locally).
+- `content` may be an empty string; there's no minimum length.
+- `memory.delete()` is not idempotent: deleting an already-deleted path
+  raises `NotFoundError`, not a repeated success.
+- A thread is attached to a bag with `MemoryCapability` in `chat.start(thread_capabilities=...)`;
+  the bag is frozen once the thread starts (see [Capabilities](#capabilities)).
+
+### Capabilities
+
+A capability is something the agent may use: `web`, `indexed_documents`, `mcp`, `skills`,
+`image_generation`, `video_generation`, `music_generation`, plus `memory`. Each one is an
+explicit object, and the keyword name tells you the scope:
+
+```python
+from cominty_sdk import (
+    ALL,
+    AgentCapabilities,
+    ImageGenerationCapability,
+    ImageGenerationScope,
+    IndexedDocumentsCapability,
+    IndexedDocumentsScope,
+    McpCapability,
+    McpScope,
+    MemoryCapability,
+    MessageScope,
+    SkillsCapability,
+    WebCapability,
+    WebScope,
+)
+
+run = await client.chat.start(
+    agent_id=AGENT_ID,
+    message="Summarize every board deck",
+    thread_capabilities=AgentCapabilities(  # frozen for the thread, start only
+        web=WebCapability(activation="always"),
+        # document_ids omitted: defaults to ALL
+        indexed_documents=IndexedDocumentsCapability(activation="always", source_ids=[101]),
+        # explicit ALL, same as omitting connections
+        mcp=McpCapability(activation="on_request", connections=ALL),
+        skills=SkillsCapability(activation="always"),
+        image_generation=ImageGenerationCapability(activation="on_request"),
+        memory=MemoryCapability(activation="always", namespace="support-bot"),
+    ),
+    message_scope=MessageScope(  # this message only
+        image_generation=ImageGenerationScope(enabled=True)
+    ),
+)
+
+await client.chat.send(
+    run.thread.id,
+    agent_id=AGENT_ID,
+    message="Only deck 2024",
+    message_scope=MessageScope(
+        indexed_documents=IndexedDocumentsScope(enabled=True, source_ids=[101]),
+        mcp=McpScope(enabled=True, connections=["linear"]),
+        web=WebScope(enabled=False),
+    ),
+)
+```
+
+- There are no shortcuts: no `web=True`, no `web="on_request"`. Thread capabilities are
+  `<Name>Capability(activation=...)` objects, message scopes are `<Name>Scope(enabled=...)`
+  objects, and the activation is always required.
+- Activation is `"always"` (on by default), `"on_request"` (off until a message enables it) or
+  `"never"` (not installed). `SkillsCapability` and `MemoryCapability` have no `"on_request"`.
+  A capability you do not pass keeps the agent's value.
+- Filters (`source_ids`, `document_ids`, `connections`, `include`) default to `ALL` (the string
+  `"*"`, no restriction), so passing `ALL` only makes the intent explicit. A capability you send
+  replaces the stored one, so an omitted filter resets to `ALL`. Otherwise pass a non-empty
+  list: `None`, `[]` and a `"*"` inside a list raise `InvalidParams`.
+- `"never"` and `enabled=False` send nothing else: passing a filter with them raises
+  `InvalidParams`.
+- `MemoryCapability(activation="always", namespace=...)` attaches the thread to a memory bag,
+  `MemoryCapability(activation="never")` runs it without memory. A message has no memory scope.
+  Without a `memory` entry, the thread uses the agent's namespace, or no memory if the agent
+  has none. The bag is frozen for the thread: a follow-up cannot change it.
+- `MessageScope` has no `skills` or `memory`.
+- A message can only narrow what the thread allows. The server answers 422 (`APIError`)
+  when it widens an allowlist or targets a capability the thread does not have.
+
+## Examples
+
+Runnable scripts for each scenario live in [`examples/`](examples/):
+
+| Script | Shows |
+|--------|-------|
+| [`01_stream_events.py`](examples/01_stream_events.py) | Stream progress events live |
+| [`02_await_result.py`](examples/02_await_result.py) | Fire and await the final answer |
+| [`03_follow_up.py`](examples/03_follow_up.py) | Continue in the same thread |
+| [`04_answer_questions.py`](examples/04_answer_questions.py) | Read & answer agent questions |
+| [`05_list_threads.py`](examples/05_list_threads.py) | List and search threads |
+| [`06_manage_thread.py`](examples/06_manage_thread.py) | Get, rename/star, archive |
+| [`07_custom_agent.py`](examples/07_custom_agent.py) | Call a custom managed agent (your own model + instructions) |
+| [`08_mcp_linear.py`](examples/08_mcp_linear.py) | Custom agent pulls live context from an MCP server (Linear) |
+| [`10_max_steps.py`](examples/10_max_steps.py) | Cap tool rounds per message, then continue past the cap |
+| [`11_capabilities.py`](examples/11_capabilities.py) | Thread and message capabilities |
+| [`12_cancel_message.py`](examples/12_cancel_message.py) | Stop a message that is still being generated |
+| [`13_export_message.py`](examples/13_export_message.py) | Export a finished message as a PDF or DOCX file |
+| [`14_upload_files.py`](examples/14_upload_files.py) | Upload files, attach them to a message, download one back |
+
+They render colored, aligned output with [`rich`](https://github.com/Textualize/rich),
+which ships in the dev extras:
+
+```bash
+uv sync --all-extras --dev                 # installs rich (or: pip install rich)
+export COMINTY_API_KEY=... COMINTY_USER_ID=user_...
+python examples/01_stream_events.py
+```
+
+## Message parameters
+
+Both `chat.start` and `chat.send` accept:
+
+| Argument | Type | Notes |
+|----------|------|-------|
+| `agent_id` | `str` | **Required.** The agent to run. |
+| `message` | `str` | **Required.** The user's message (max 30,000 chars). |
+| `name` | `str` | `start` only: names the new thread. |
+| `file_ids` | `list[str]` | Ids of files uploaded with `chat.upload_file()` (max 5). |
+| `thread_capabilities` | `AgentCapabilities` | `start` only: capability override, frozen for the thread. Includes the memory bag (`MemoryCapability`). |
+| `message_scope` | `MessageScope` | Turn capabilities on/off or narrow them for this message (sent as `message.scope`). |
+| `max_steps` | `int` | Cap on tool rounds for **this message** (integer `>= 1`). Per message, not per thread. Unset (or `SERVER_DEFAULT`) means the server default, 60 today. |
+
+Invalid values raise `InvalidParams` **before** any request is sent.
+
+## Configuration
+
+| Argument | Env var | Default |
+|----------|---------|---------|
+| `api_token` | `COMINTY_API_KEY` | (required) |
+| `user_id` | `COMINTY_USER_ID` | (required) |
+| `base_url` | `COMINTY_BASE_URL` | `https://ds.cominty.com` |
+| `timeout` | none | `60` (seconds) |
+
+Resolution order for each option: **explicit argument → environment variable →
+default**. The SDK does **not** auto-load `.env`; export the vars or load the
+file yourself (see [`.env.example`](.env.example)).
+
+## Error handling
+
+Every error is a subclass of `ComintyError`:
+
+```python
+from cominty_sdk import (
+    ComintyError,  # base: catch-all
+    APIError,  # any 4xx/5xx; carries .status_code and a typed .error body
+    AuthError,  # 401
+    PermissionError,  # 403
+    NotFoundError,  # 404
+    ConflictError,  # 409
+    RateLimitError,  # 429: exposes .reset_at
+    ServerError,  # 5xx
+    APIConnectionError,  # network failure / timeout, no response
+    StreamInterrupted,  # server shut down mid-stream: carries the .partial Message
+    InvalidParams,  # client-side validation failed: .errors lists each problem
+    SDKError,  # unexpected SDK-internal condition
+)
+
+try:
+    run = await client.chat.start(agent_id=AGENT_ID, message="hi")
+    print(await run.text())
+except RateLimitError as e:
+    print(f"slow down: retry after {e.reset_at}")
+except APIError as e:
+    print(f"API error {e.status_code}: {e.error}")
+```
+
+## Development
+
+```bash
+uv sync --all-extras --dev
+uv run pytest          # tests
+uv run ruff check .    # lint
+uv run pyright         # type-check (strict)
+```
+
+Coverage (statements + branches) is measured with `pytest-cov`; CI fails under
+100%:
+
+```bash
+uv run pytest --cov --cov-report=term-missing
+```
+
+Integration tests are opt-in (they hit the real API):
+
+```bash
+COMINTY_API_KEY=... COMINTY_USER_ID=... uv run pytest -m integration
+```
+
+See [AGENTS.md](AGENTS.md) for coding conventions (typing, versioning, models).
+
+## Developer tasks
+
+```bash
+uv run invoke --list       # show all tasks, including the code.* namespace
+uv run invoke code.format  # ruff format, then ruff check --fix
+uv run invoke code.check   # ruff check, ruff format --check, pyright
+uv run invoke code.test    # pytest --cov, same --cov-fail-under=100 floor as CI
+uv run invoke code.all     # format, then check, then test: run before opening a PR
+```
+
+## Releasing
+
+Publishing to PyPI uses **Trusted Publishing (OIDC)**: no tokens stored in
+GitHub, triggered by publishing a **GitHub Release**
+(`.github/workflows/release.yml`). The published version comes from
+`pyproject.toml`.
+
+**`uv run invoke release` modifies repository files and CREATES A GIT COMMIT
+AND TAG.** It bumps `pyproject.toml`, regenerates `uv.lock`, runs the lint /
+type-check / test / build gate, then commits and tags: it never pushes and
+never creates the GitHub Release itself. It asks for confirmation before
+writing any file, and again before committing and tagging; pass `--yes` to
+skip both prompts.
+
+```bash
+# 1. bump, validate, commit, and tag locally: pick exactly one
+uv run invoke release --patch            # X.Y.Z -> X.Y.(Z+1)
+uv run invoke release --minor            # X.Y.Z -> X.(Y+1).0
+uv run invoke release --major            # X.Y.Z -> (X+1).0.0
+uv run invoke release --version X.Y.Z    # set an explicit version
+
+# 2. push the commit and the tag it just created
+git push origin HEAD --follow-tags
+
+# 3. create the release: this triggers the publish workflow
+gh release create vX.Y.Z --title vX.Y.Z --generate-notes
+#    pre-release rehearsal (skips `invoke release`): tag and push manually,
+#    then gh release create vX.Y.Zrc1 --prerelease --generate-notes
+```
+
+A local rehearsal to TestPyPI is available via `uv run invoke publish-test`.
+
+## License
+
+MIT
