@@ -1,0 +1,4 @@
+# AcmeTech recruitment monorepo.
+# Services are packaged separately (backend/pyproject.toml, ats-mcp/pyproject.toml),
+# since the FastAPI bridge and the MCP server deploy independently with different
+# dependencies. This file reserves the root for shared tool configuration.

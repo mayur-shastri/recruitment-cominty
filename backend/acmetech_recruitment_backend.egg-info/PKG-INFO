@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: acmetech-recruitment-backend
+Version: 0.1.0
+Summary: AcmeTech recruitment backend: Slack/FastAPI bridge to Cominty managed agents.
+Requires-Python: >=3.10
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn[standard]>=0.30
+Requires-Dist: slack-sdk>=3.27
+Requires-Dist: aiohttp>=3.9
+Requires-Dist: cominty-sdk>=1.0
+Requires-Dist: sqlalchemy[asyncio]>=2.0
+Requires-Dist: asyncpg>=0.29
+Requires-Dist: alembic>=1.13
+Requires-Dist: pydantic-settings>=2.5
+Requires-Dist: httpx>=0.27
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Requires-Dist: aiosqlite>=0.19; extra == "dev"

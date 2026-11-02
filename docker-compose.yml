@@ -1,0 +1,16 @@
+# Optional local Postgres. M1 uses Supabase (DATABASE_URL), so this is NOT required.
+# For local-only development: docker compose up -d db
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: acmetech
+      POSTGRES_PASSWORD: acmetech
+      POSTGRES_DB: acmetech_recruitment
+    ports:
+      - "5432:5432"
+    volumes:
+      - acmetech_pgdata:/var/lib/postgresql/data
+
+volumes:
+  acmetech_pgdata:
