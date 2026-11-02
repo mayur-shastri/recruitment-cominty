@@ -18,7 +18,7 @@ class McpSettings(BaseSettings):
     log_level: str = "INFO"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8002
-    harly_base_url: str = "https://careers-acmetech.duckdns.org/api/v1"
+    harly_base_url: str
     harly_api_key: str = ""
 
 
