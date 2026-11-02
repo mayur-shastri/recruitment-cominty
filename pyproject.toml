@@ -2,3 +2,12 @@
 # Services are packaged separately (backend/pyproject.toml, ats-mcp/pyproject.toml),
 # since the FastAPI bridge and the MCP server deploy independently with different
 # dependencies. This file reserves the root for shared tool configuration.
+
+# Root is the canonical test entrypoint: bare `pytest` runs both suites with
+# async auto mode. (Without this, root runs fall back to STRICT mode and every
+# async test/fixture fails — per-project configs only apply when pytest's
+# rootdir resolves inside that project.)
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "ats-mcp/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
