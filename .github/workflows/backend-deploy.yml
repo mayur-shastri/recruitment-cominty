@@ -28,7 +28,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             set -euo pipefail
-            cd ~/acmetech-recruitment
+            cd ~/recruitment-cominty
             git pull --ff-only
             cd backend
             docker compose up -d --build
