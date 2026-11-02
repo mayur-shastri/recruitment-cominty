@@ -24,3 +24,5 @@ cp .env.example .env  # then fill in values; never commit .env
 Migrate: `alembic -c database/alembic.ini upgrade head`
 Run from the repo root: `uvicorn app.main:app --reload`
 Test: `pytest backend/tests -q`
+
+Deploy (VPS + Docker + Caddy): see `docs/vps-deploy.md`.

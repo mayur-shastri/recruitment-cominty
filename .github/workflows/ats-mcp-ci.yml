@@ -1,0 +1,22 @@
+# ATS MCP CI: runs iff ats-mcp/** (or this file) changes.
+name: ats-mcp-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["ats-mcp/**", ".github/workflows/ats-mcp-ci.yml"]
+  pull_request:
+    paths: ["ats-mcp/**", ".github/workflows/ats-mcp-ci.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install MCP deps
+        run: pip install -r ats-mcp/requirements.txt pytest pytest-asyncio
+      - name: Run tests
+        run: pytest ats-mcp/tests -q
