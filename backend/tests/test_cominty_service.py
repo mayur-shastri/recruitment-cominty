@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 from cominty_sdk.exceptions import AuthError, ServerError
 
+from cominty_sdk import AgentCapabilities, McpCapability
+
 from app.services.cominty import ComintyService, ComintyServiceError
 
 
@@ -28,8 +30,8 @@ class FakeChat:
         self.calls: list[tuple] = []
         self.failure: Exception | None = None
 
-    async def start(self, *, agent_id: str, message: str, name=None):
-        self.calls.append(("start", agent_id, message, name))
+    async def start(self, *, agent_id: str, message: str, name=None, thread_capabilities=None):
+        self.calls.append(("start", agent_id, message, name, thread_capabilities))
         if self.failure is not None:
             raise self.failure
         return FakeRun(thread_id="thr_1", reply="started!")
@@ -54,7 +56,15 @@ async def test_start_returns_thread_and_reply() -> None:
     service = ComintyService(client, agent_id="agt_1")  # type: ignore[arg-type]
     thread_id, reply = await service.start_thread("hi", name="slack:U1")
     assert (thread_id, reply) == ("thr_1", "started!")
-    assert client.chat.calls == [("start", "agt_1", "hi", "slack:U1")]
+    assert client.chat.calls == [("start", "agt_1", "hi", "slack:U1", None)]
+
+
+async def test_start_passes_thread_capabilities() -> None:
+    client = FakeClient()
+    capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=["ats"]))
+    service = ComintyService(client, agent_id="agt_1", thread_capabilities=capabilities)  # type: ignore[arg-type]
+    await service.start_thread("hi")
+    assert client.chat.calls == [("start", "agt_1", "hi", None, capabilities)]
 
 
 async def test_send_returns_reply() -> None:

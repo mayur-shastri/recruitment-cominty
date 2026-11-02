@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cominty_sdk import AsyncCominty
+from cominty_sdk import AgentCapabilities, AsyncCominty
 from cominty_sdk.exceptions import (
     APIConnectionError,
     ComintyError,
@@ -26,9 +26,12 @@ _TRANSIENT_ERRORS = (RateLimitError, ServerError, APIConnectionError, StreamInte
 class ComintyService:
     """Start threads and send follow-ups on the Recruiter Agent."""
 
-    def __init__(self, client: AsyncCominty, *, agent_id: str) -> None:
+    def __init__(
+        self, client: AsyncCominty, *, agent_id: str, thread_capabilities: AgentCapabilities | None = None
+    ) -> None:
         self._client = client
         self._agent_id = agent_id
+        self._thread_capabilities = thread_capabilities
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -36,7 +39,12 @@ class ComintyService:
     async def start_thread(self, message: str, *, name: str | None = None) -> tuple[str, str]:
         """Start a thread with a first message. Returns (thread_id, reply_text)."""
         try:
-            run = await self._client.chat.start(agent_id=self._agent_id, message=message, name=name)
+            run = await self._client.chat.start(
+                agent_id=self._agent_id,
+                message=message,
+                name=name,
+                thread_capabilities=self._thread_capabilities,
+            )
             return str(run.thread.id), await run.text()
         except ComintyError as exc:
             raise self._wrap(exc) from exc

@@ -1,0 +1,5 @@
+# ATS MCP server deps. mcp is pinned: server.py targets the verified 2.3.0 API.
+mcp==2.3.0
+httpx>=0.27
+pydantic-settings>=2.5
+uvicorn[standard]>=0.31

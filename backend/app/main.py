@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from cominty_sdk import AsyncCominty
+from cominty_sdk import AgentCapabilities, AsyncCominty, McpCapability
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from slack_sdk.web.async_client import AsyncWebClient
@@ -38,10 +38,18 @@ async def lifespan(app: FastAPI):
             user_id=settings.cominty_user_id,
             timeout=settings.cominty_timeout_s,
         )
+        # Capabilities freeze for a thread's lifetime at start; existing threads
+        # are unaffected. Register the `ats` integration in Cominty before a
+        # NEW thread starts, or the start call fails validation server-side.
+        recruiter_capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=["ats"]))
         app.state.runtime = Runtime(
             engine=engine,
             session_factory=session_factory,
-            cominty=ComintyService(client, agent_id=settings.cominty_recruiter_agent_id),
+            cominty=ComintyService(
+                client,
+                agent_id=settings.cominty_recruiter_agent_id,
+                thread_capabilities=recruiter_capabilities,
+            ),
             cominty_user_id=settings.cominty_user_id,
             slack=AsyncWebClient(token=settings.slack_bot_token),
             signing_secret=settings.slack_signing_secret,
