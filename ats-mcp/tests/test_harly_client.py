@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from services.harly import HarlyClient, HarlyError, get_harly_client
 
 def _client(handler) -> HarlyClient:
     return HarlyClient(
-        base_url="https://harly.test/api/v1", api_key="key", transport=httpx.MockTransport(handler)
+        base_url="https://harly.test", api_key="key", transport=httpx.MockTransport(handler)
     )
 
 
@@ -26,6 +27,7 @@ async def test_list_jobs_parses_envelope_and_auth() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["auth"] = request.headers.get("authorization")
+        seen["path"] = request.url.path
         seen["params"] = dict(request.url.params)
         return httpx.Response(
             200,
@@ -38,6 +40,7 @@ async def test_list_jobs_parses_envelope_and_auth() -> None:
     finally:
         await client.aclose()
     assert seen["auth"] == "Bearer key"
+    assert seen["path"] == "/api/v1/jobs"
     assert seen["params"] == {"limit": "5", "status": "open"}
     assert result == {"jobs": [{"id": "j1"}], "next_cursor": "c9", "has_more": True}
 
@@ -99,3 +102,111 @@ async def test_missing_key_fails_fast(monkeypatch) -> None:
     monkeypatch.setattr(harly_module, "get_mcp_settings", lambda: FakeSettings())
     with pytest.raises(HarlyError, match="HARLY_API_KEY"):
         get_harly_client()
+
+
+def test_base_url_with_api_prefix_fails_fast(monkeypatch) -> None:
+    class FakeSettings:
+        harly_base_url = "https://x/api/v1"
+        harly_api_key = "key"
+
+    monkeypatch.setattr(harly_module, "get_mcp_settings", lambda: FakeSettings())
+    with pytest.raises(HarlyError, match="without the /api/v1 suffix"):
+        get_harly_client()
+
+
+async def test_create_job_forces_draft() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(201, json={"data": {"id": "j9", "status": "draft"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        result = await client.create_job(
+            title="T", description="D", employment_type="full_time", workplace_type="remote"
+        )
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("POST", "/api/v1/jobs")
+    assert seen["body"] == {
+        "title": "T",
+        "description": "D",
+        "employmentType": "full_time",
+        "workplaceType": "remote",
+        "status": "draft",
+    }
+    assert result == {"id": "j9", "status": "draft"}
+
+
+async def test_update_job_sends_only_provided_fields() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"id": "j1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.update_job("j1", title="T", salary_min=5)
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("PATCH", "/api/v1/jobs/j1")
+    assert seen["body"] == {"title": "T", "salaryMin": 5}
+    assert "status" not in seen["body"]
+
+
+async def test_publish_and_close_post_empty_bodies() -> None:
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.content))
+        return httpx.Response(200, json={"data": {"id": "j1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.publish_job("j1")
+        await client.close_job("j1")
+    finally:
+        await client.aclose()
+    assert seen == [
+        ("POST", "/api/v1/jobs/j1/publish", b""),
+        ("POST", "/api/v1/jobs/j1/close", b""),
+    ]
+
+
+async def test_delete_job_uses_delete() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"data": {"id": "j1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.delete_job("j1")
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("DELETE", "/api/v1/jobs/j1")
+
+
+async def test_422_maps_to_harly_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"error": {"code": "validation_failed", "message": "bad"}})
+
+    client = _client(handler)
+    try:
+        with pytest.raises(HarlyError) as exc_info:
+            await client.create_job(
+                title="T", description="D", employment_type="x", workplace_type="y"
+            )
+    finally:
+        await client.aclose()
+    assert exc_info.value.code == "validation_failed"
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.transient is False

@@ -92,6 +92,101 @@ class HarlyClient:
         env = await self._request("GET", f"/api/v1/jobs/{job_id}/stages")
         return {"stages": env.get("data", [])}
 
+    # -- jobs: writes (M2.1b/c) ------------------------------------------------
+
+    async def create_job(
+        self,
+        *,
+        title: str,
+        description: str,
+        employment_type: str,
+        workplace_type: str,
+        department: str | None = None,
+        location: str | None = None,
+        requirements: str | None = None,
+        benefits: str | None = None,
+        keywords: list[str] | None = None,
+        salary_min: int | None = None,
+        salary_max: int | None = None,
+        currency: str | None = None,
+        salary_period: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a job. Always created as draft: no status param exists by design."""
+        body: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "employmentType": employment_type,
+            "workplaceType": workplace_type,
+            "status": "draft",
+        }
+        optionals = {
+            "department": department,
+            "location": location,
+            "requirements": requirements,
+            "benefits": benefits,
+            "keywords": keywords,
+            "salaryMin": salary_min,
+            "salaryMax": salary_max,
+            "currency": currency,
+            "salaryPeriod": salary_period,
+        }
+        for key, value in optionals.items():
+            if value is not None:
+                body[key] = value
+        env = await self._request("POST", "/api/v1/jobs", json_body=body)
+        return env.get("data", {})
+
+    async def update_job(
+        self,
+        job_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        department: str | None = None,
+        location: str | None = None,
+        employment_type: str | None = None,
+        workplace_type: str | None = None,
+        requirements: str | None = None,
+        benefits: str | None = None,
+        keywords: list[str] | None = None,
+        salary_min: int | None = None,
+        salary_max: int | None = None,
+        currency: str | None = None,
+        salary_period: str | None = None,
+    ) -> dict[str, Any]:
+        """Partial update. No status param exists by design (publish/close own transitions)."""
+        provided = {
+            "title": title,
+            "description": description,
+            "department": department,
+            "location": location,
+            "employmentType": employment_type,
+            "workplaceType": workplace_type,
+            "requirements": requirements,
+            "benefits": benefits,
+            "keywords": keywords,
+            "salaryMin": salary_min,
+            "salaryMax": salary_max,
+            "currency": currency,
+            "salaryPeriod": salary_period,
+        }
+        body = {key: value for key, value in provided.items() if value is not None}
+        env = await self._request("PATCH", f"/api/v1/jobs/{job_id}", json_body=body)
+        return env.get("data", {})
+
+    async def publish_job(self, job_id: str) -> dict[str, Any]:
+        env = await self._request("POST", f"/api/v1/jobs/{job_id}/publish")
+        return env.get("data", {})
+
+    async def close_job(self, job_id: str) -> dict[str, Any]:
+        env = await self._request("POST", f"/api/v1/jobs/{job_id}/close")
+        return env.get("data", {})
+
+    async def delete_job(self, job_id: str) -> dict[str, Any]:
+        """Soft-delete (status reverts to closed). Test cleanup only — never an MCP tool."""
+        env = await self._request("DELETE", f"/api/v1/jobs/{job_id}")
+        return env.get("data", {})
+
     # -- transport -----------------------------------------------------------
 
     async def _request(
@@ -156,4 +251,6 @@ def get_harly_client() -> HarlyClient:
     settings = get_mcp_settings()
     if not settings.harly_api_key:
         raise HarlyError("HARLY_API_KEY is not configured")
+    if settings.harly_base_url.rstrip("/").endswith("/api/v1"):
+        raise HarlyError("HARLY_BASE_URL must be scheme+host without the /api/v1 suffix")
     return HarlyClient(base_url=settings.harly_base_url, api_key=settings.harly_api_key)

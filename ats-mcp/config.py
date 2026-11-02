@@ -18,6 +18,7 @@ class McpSettings(BaseSettings):
     log_level: str = "INFO"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8002
+    # Scheme+host only, no /api/v1 suffix (enforced in get_harly_client).
     harly_base_url: str
     harly_api_key: str = ""
 
