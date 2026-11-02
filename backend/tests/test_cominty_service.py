@@ -61,7 +61,7 @@ async def test_start_returns_thread_and_reply() -> None:
 
 async def test_start_passes_thread_capabilities() -> None:
     client = FakeClient()
-    capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=["ats"]))
+    capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=["harly_ats"]))
     service = ComintyService(client, agent_id="agt_1", thread_capabilities=capabilities)  # type: ignore[arg-type]
     await service.start_thread("hi")
     assert client.chat.calls == [("start", "agt_1", "hi", None, capabilities)]
