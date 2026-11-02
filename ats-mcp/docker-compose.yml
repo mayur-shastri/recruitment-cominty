@@ -1,6 +1,6 @@
 # Recruitment MCP server (AcmeTech ATS tools for Cominty agents).
 # Joins the EXISTING shared proxy network - never another Caddy.
-# Set YOUR_PROXY_NETWORK from VPS inspection (see docs/vps-deploy.md step 1).
+# Shared proxy network (verified via VPS inspection; see docs/vps-deploy.md).
 services:
   recruitment-mcp:
     build: .
@@ -18,4 +18,4 @@ services:
 networks:
   proxy:
     external: true
-    name: YOUR_PROXY_NETWORK
+    name: harly_default

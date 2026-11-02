@@ -1,6 +1,6 @@
 # Recruitment backend (Slack <-> Cominty bridge).
 # Joins the EXISTING shared proxy network - never another Caddy.
-# Set YOUR_PROXY_NETWORK from VPS inspection (see docs/vps-deploy.md step 1).
+# Shared proxy network (verified via VPS inspection; see docs/vps-deploy.md).
 # Requires ../.env at the repo root on the VPS (gitignored, created once).
 services:
   recruitment-backend:
@@ -17,4 +17,4 @@ services:
 networks:
   proxy:
     external: true
-    name: YOUR_PROXY_NETWORK
+    name: harly_default
