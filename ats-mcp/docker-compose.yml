@@ -1,0 +1,21 @@
+# Recruitment MCP server (AcmeTech ATS tools for Cominty agents).
+# Joins the EXISTING shared proxy network - never another Caddy.
+# Set YOUR_PROXY_NETWORK from VPS inspection (see docs/vps-deploy.md step 1).
+services:
+  recruitment-mcp:
+    build: .
+    container_name: recruitment-mcp
+    restart: unless-stopped
+    expose:
+      - "8002"
+    environment:
+      MCP_HOST: "0.0.0.0" # 127.0.0.1 would be unreachable from Caddy
+      MCP_PORT: "8002"
+      LOG_LEVEL: INFO
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: YOUR_PROXY_NETWORK
