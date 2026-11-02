@@ -11,6 +11,10 @@ from cominty_sdk.exceptions import (
     StreamInterrupted,
 )
 
+ATS_CONNECTION_ID = "harly_ats"
+"""Cominty MCP integration identifier. Must exactly match the identifier
+registered in the Cominty workspace — a mismatch silently attaches zero tools."""
+
 
 class ComintyServiceError(Exception):
     """User-safe Cominty failure. `transient` hints whether a retry may help."""

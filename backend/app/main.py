@@ -18,7 +18,7 @@ from app.api.slack import Runtime, router as slack_router
 from app.config import get_settings, to_async_database_url
 from app.database import create_engine_and_sessions
 from app.logging_setup import setup_logging
-from app.services.cominty import ComintyService
+from app.services.cominty import ATS_CONNECTION_ID, ComintyService
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ async def lifespan(app: FastAPI):
             timeout=settings.cominty_timeout_s,
         )
         # Capabilities freeze for a thread's lifetime at start; existing threads
-        # are unaffected. Register the `ats` integration in Cominty before a
+        # are unaffected. Register the `harly_ats` integration in Cominty before a
         # NEW thread starts, or the start call fails validation server-side.
-        recruiter_capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=["ats"]))
+        recruiter_capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=[ATS_CONNECTION_ID]))
         app.state.runtime = Runtime(
             engine=engine,
             session_factory=session_factory,
