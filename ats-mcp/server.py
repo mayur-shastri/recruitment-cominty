@@ -1,4 +1,4 @@
-"""AcmeTech ATS MCP server: recruitment tools for Cominty agents (M2: health only).
+"""AcmeTech ATS MCP server: recruitment tools for Cominty agents.
 
 Stateless Streamable HTTP (latest MCP spec): every request stands alone, no
 server-side session state. All recruitment state lives in Harly/Postgres.
@@ -12,6 +12,8 @@ from __future__ import annotations
 from mcp.server.mcpserver import MCPServer
 
 from config import get_mcp_settings
+from tools.applications import register_tools as register_application_tools
+from tools.candidates import register_tools as register_candidate_tools
 from tools.jobs import register_tools as register_job_tools
 
 mcp = MCPServer(
@@ -32,6 +34,8 @@ def health() -> str:
 
 
 register_job_tools(mcp)
+register_application_tools(mcp)
+register_candidate_tools(mcp)
 
 
 def main() -> None:

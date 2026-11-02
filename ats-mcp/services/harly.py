@@ -66,7 +66,7 @@ class HarlyClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    # -- jobs: reads (M2.1a; writes land in M2.1b/c) --------------------------
+    # -- jobs: reads (M2.1a) ----------------------------------------------------
 
     async def list_jobs(
         self, *, status: str | None = None, limit: int = 20, cursor: str | None = None
@@ -91,6 +91,39 @@ class HarlyClient:
     async def list_job_stages(self, job_id: str) -> dict[str, Any]:
         env = await self._request("GET", f"/api/v1/jobs/{job_id}/stages")
         return {"stages": env.get("data", [])}
+
+    # -- applications/candidates: reads (M2.2a; decisions land in M2.2b) --------
+
+    async def list_applications(
+        self,
+        *,
+        job_id: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if job_id is not None:
+            params["jobId"] = job_id
+        if status is not None:
+            params["status"] = status
+        if cursor is not None:
+            params["cursor"] = cursor
+        env = await self._request("GET", "/api/v1/applications", params=params)
+        meta = env.get("meta", {}).get("pagination", {})
+        return {
+            "applications": env.get("data", []),
+            "next_cursor": meta.get("nextCursor"),
+            "has_more": meta.get("hasMore", False),
+        }
+
+    async def get_application(self, application_id: str) -> dict[str, Any]:
+        env = await self._request("GET", f"/api/v1/applications/{application_id}")
+        return env.get("data", {})
+
+    async def get_candidate(self, candidate_id: str) -> dict[str, Any]:
+        env = await self._request("GET", f"/api/v1/candidates/{candidate_id}")
+        return env.get("data", {})
 
     # -- jobs: writes (M2.1b/c) ------------------------------------------------
 

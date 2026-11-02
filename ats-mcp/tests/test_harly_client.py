@@ -210,3 +210,58 @@ async def test_422_maps_to_harly_error() -> None:
     assert exc_info.value.code == "validation_failed"
     assert exc_info.value.status_code == 422
     assert exc_info.value.transient is False
+
+
+async def test_list_applications_filters_and_pagination() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "a1"}], "meta": {"pagination": {"nextCursor": "c9", "hasMore": True}}},
+        )
+
+    client = _client(handler)
+    try:
+        result = await client.list_applications(job_id="j1", status="active", limit=5)
+    finally:
+        await client.aclose()
+    assert seen["path"] == "/api/v1/applications"
+    assert seen["params"] == {"limit": "5", "jobId": "j1", "status": "active"}
+    assert result == {"applications": [{"id": "a1"}], "next_cursor": "c9", "has_more": True}
+
+
+async def test_get_application_passthrough() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"data": {"id": "a1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        result = await client.get_application("a1")
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("GET", "/api/v1/applications/a1")
+    assert result == {"id": "a1"}
+
+
+async def test_get_candidate_passthrough() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"data": {"id": "c1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        result = await client.get_candidate("c1")
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("GET", "/api/v1/candidates/c1")
+    assert result == {"id": "c1"}
