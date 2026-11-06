@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -29,26 +28,6 @@ class Settings(BaseSettings):
     cominty_user_id: str
     cominty_recruiter_agent_id: str
     cominty_timeout_s: float = 300.0
-
-
-def to_async_database_url(url: str) -> str:
-    """Normalize a Postgres URL for SQLAlchemy's asyncpg driver.
-
-    Accepts libpq-style URLs (including Supabase direct strings) and returns a
-    ``postgresql+asyncpg://`` URL, translating ``sslmode`` to asyncpg's ``ssl``.
-    """
-    parts = urlsplit(url)
-    if parts.scheme in {"postgres", "postgresql"}:
-        scheme = "postgresql+asyncpg"
-    elif parts.scheme == "postgresql+asyncpg":
-        scheme = parts.scheme
-    else:
-        raise ValueError(f"unsupported database scheme: {parts.scheme!r}")
-    query = [
-        ("ssl" if key == "sslmode" else key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-    ]
-    return urlunsplit((scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 @lru_cache

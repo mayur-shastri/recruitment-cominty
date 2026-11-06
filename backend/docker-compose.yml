@@ -4,7 +4,9 @@
 # Requires ../.env at the repo root on the VPS (gitignored, created once).
 services:
   recruitment-backend:
-    build: .
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
     container_name: recruitment-backend
     restart: unless-stopped
     expose:

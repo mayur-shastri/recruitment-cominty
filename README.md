@@ -7,6 +7,7 @@ remains the ATS system of record.
 ## Layout
 
 - `backend/` — FastAPI bridge (`app/`), tests (`tests/`)
+- `db/` — shared Postgres layer (`recruitment_db` package: models, engine, URL helper)
 - `ats-mcp/` — ATS MCP server (Milestone 2)
 - `database/migrations/` — Alembic migrations (lands with backend foundation)
 - `docs/` — reference material dropped in from external docs
@@ -17,7 +18,7 @@ Setup (in WSL, from the repo root):
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e 'backend[dev]'
+pip install -e ./db -e 'backend[dev]'
 cp .env.example .env  # then fill in values; never commit .env
 ```
 

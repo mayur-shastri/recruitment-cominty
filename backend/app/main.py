@@ -15,10 +15,11 @@ from slack_sdk.web.async_client import AsyncWebClient
 from sqlalchemy import text
 
 from app.api.slack import Runtime, router as slack_router
-from app.config import get_settings, to_async_database_url
-from app.database import create_engine_and_sessions
+from app.config import get_settings
 from app.logging_setup import setup_logging
 from app.services.cominty import ATS_CONNECTION_ID, ComintyService
+from recruitment_db.database import create_engine_and_sessions
+from recruitment_db.urls import to_async_database_url
 
 logger = logging.getLogger(__name__)
 

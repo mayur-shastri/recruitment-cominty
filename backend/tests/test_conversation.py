@@ -6,9 +6,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.database import Base
-from app.models import Employee
 from app.services.conversation import get_thread, is_hiring_manager, record_thread
+from recruitment_db.database import Base
+from recruitment_db.models import Employee
 
 
 @pytest.fixture

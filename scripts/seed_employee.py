@@ -12,9 +12,10 @@ import asyncio
 
 from sqlalchemy import select
 
-from app.config import get_settings, to_async_database_url
-from app.database import create_engine_and_sessions
-from app.models import Employee
+from app.config import get_settings
+from recruitment_db.database import create_engine_and_sessions
+from recruitment_db.models import Employee
+from recruitment_db.urls import to_async_database_url
 
 
 async def main() -> None:

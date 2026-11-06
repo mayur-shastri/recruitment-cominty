@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ConversationThread, Employee
+from recruitment_db.models import ConversationThread, Employee
 
 MIN_HM_GRADE = 7  # hiring managers are employees with grade *above* this
 

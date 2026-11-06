@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.integrations.slack.verification import verify_slack_signature
-from app.models import SlackEvent
+from recruitment_db.models import SlackEvent
 from app.services.cominty import ComintyService, ComintyServiceError
 from app.services.conversation import get_thread, is_hiring_manager, record_thread
 
