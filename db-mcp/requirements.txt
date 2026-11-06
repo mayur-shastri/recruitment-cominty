@@ -1,0 +1,7 @@
+# Scores MCP server deps. mcp is pinned: server.py targets the verified 2.3.0 API.
+# Also install the shared models from the repo root: pip install -e ./db
+mcp==2.3.0
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29
+pydantic-settings>=2.5
+uvicorn[standard]>=0.31
