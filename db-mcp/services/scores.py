@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from config import get_db_mcp_settings
-from recruitment_db.models import ApplicationResume, ApplicationScore, ScoringCriteria
+from recruitment_db.models import (
+    ApplicationResume,
+    ApplicationScore,
+    JobInterviewConfig,
+    ScoringCriteria,
+)
 
 
 class ScoresError(Exception):
@@ -162,6 +167,36 @@ class ScoresStore:
                     )
                 ).scalars()
                 return {"job_id": job_id, "scores": [self._shape(row) for row in rows]}
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+
+    async def save_interview_config(
+        self, *, job_id: str, rounds: list, updated_by: str | None = None
+    ) -> dict[str, Any]:
+        """Save a job's interview plan, overwriting any previous plan."""
+        try:
+            async with self._sessions() as session:
+                row = await session.get(JobInterviewConfig, job_id)
+                if row is None:
+                    row = JobInterviewConfig(job_id=job_id, rounds=rounds, updated_by=updated_by)
+                    session.add(row)
+                else:
+                    row.rounds = rounds
+                    row.updated_by = updated_by
+                await session.commit()
+                return {"job_id": row.job_id, "rounds": row.rounds}
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+
+    async def get_interview_config(self, job_id: str) -> dict[str, Any]:
+        try:
+            async with self._sessions() as session:
+                row = await session.get(JobInterviewConfig, job_id)
+                if row is None:
+                    raise ScoresNotFoundError(f"no interview plan for job {job_id!r}")
+                return {"job_id": row.job_id, "rounds": row.rounds}
+        except ScoresNotFoundError:
+            raise
         except SQLAlchemyError as exc:
             raise ScoresError("score store request failed") from exc
 

@@ -66,6 +66,14 @@ class FakeScoresStore:
         self.calls.append(("resume", application_id))
         return {"application_id": application_id, "resume_url": "https://pub.test/r.pdf"}
 
+    async def save_interview_config(self, *, job_id, rounds, updated_by=None):
+        self.calls.append(("save_plan", job_id, rounds, updated_by))
+        return {"job_id": job_id, "rounds": rounds}
+
+    async def get_interview_config(self, job_id: str):
+        self.calls.append(("plan", job_id))
+        return {"job_id": job_id, "rounds": [{"name": "Screen"}]}
+
     async def list_top(self, job_id: str, limit: int):
         self.calls.append(("top", job_id, limit))
         return {"job_id": job_id, "scores": [{"application_id": "a1", "total_score": 90.0}]}
@@ -239,6 +247,76 @@ async def test_save_criteria_forwards_and_returns(fake_store) -> None:
     assert fake_store.calls == [("save_criteria", "j1", criteria, "U1")]
 
 
+def _good_plan():
+    return {
+        "job_id": "j1",
+        "rounds": [
+            {
+                "name": "Tech screen",
+                "window": {"start": "2026-11-20", "end": "2026-11-27"},
+                "pool": [{"name": "Asha", "email": "asha@acme.com"}],
+            }
+        ],
+        "confirmation": "HM: screen Nov 20-27 with Asha",
+    }
+
+
+async def test_save_interview_config_requires_confirmation(fake_store) -> None:
+    with pytest.raises(ToolError, match="confirmation"):
+        await scores.save_interview_config(**{**_good_plan(), "confirmation": ""})
+    assert fake_store.calls == []
+
+
+async def test_save_interview_config_validates_rounds(fake_store) -> None:
+    good = _good_plan()
+    with pytest.raises(ToolError, match="must not be blank"):
+        await scores.save_interview_config(**{**good, "job_id": "  "})
+    with pytest.raises(ToolError, match="non-empty ordered list"):
+        await scores.save_interview_config(**{**good, "rounds": []})
+    with pytest.raises(ToolError, match="non-blank name"):
+        await scores.save_interview_config(
+            **{**good, "rounds": [{**good["rounds"][0], "name": "  "}]}
+        )
+    with pytest.raises(ToolError, match="unique"):
+        await scores.save_interview_config(**{**good, "rounds": [good["rounds"][0]] * 2})
+    with pytest.raises(ToolError, match="ISO dates"):
+        await scores.save_interview_config(
+            **{**good, "rounds": [{**good["rounds"][0], "window": {"start": "soon", "end": "later"}}]}
+        )
+    with pytest.raises(ToolError, match="start must not be after end"):
+        await scores.save_interview_config(
+            **{
+                **good,
+                "rounds": [
+                    {**good["rounds"][0], "window": {"start": "2026-11-27", "end": "2026-11-20"}}
+                ],
+            }
+        )
+    with pytest.raises(ToolError, match="non-empty interviewer pool"):
+        await scores.save_interview_config(**{**good, "rounds": [{**good["rounds"][0], "pool": []}]})
+    with pytest.raises(ToolError, match="valid email"):
+        await scores.save_interview_config(
+            **{
+                **good,
+                "rounds": [{**good["rounds"][0], "pool": [{"name": "Asha", "email": "not-an-email"}]}],
+            }
+        )
+    assert fake_store.calls == []
+
+
+async def test_save_interview_config_forwards_and_returns(fake_store) -> None:
+    plan = _good_plan()
+    result = await scores.save_interview_config(**plan, updated_by="U1")
+    assert result == {"job_id": "j1", "rounds": plan["rounds"]}
+    assert fake_store.calls == [("save_plan", "j1", plan["rounds"], "U1")]
+
+
+async def test_get_interview_config_passthrough(fake_store) -> None:
+    result = await scores.get_interview_config("j1")
+    assert result["job_id"] == "j1"
+    assert fake_store.calls == [("plan", "j1")]
+
+
 async def test_get_resume_passthrough(fake_store) -> None:
     assert await scores.get_application_resume("a1") == {
         "application_id": "a1",
@@ -280,6 +358,8 @@ def test_register_all_exposes_everything() -> None:
         "get_application_score",
         "list_top_applications",
         "get_application_resume",
+        "save_interview_config",
+        "get_interview_config",
     ]
     assert all(description for _, description in registered)
 
@@ -297,6 +377,8 @@ def test_register_profiles_split_read_write() -> None:
         "get_application_score",
         "list_top_applications",
         "get_application_resume",
+        "save_interview_config",
+        "get_interview_config",
     ]
 
 
