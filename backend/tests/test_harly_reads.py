@@ -49,6 +49,37 @@ async def test_list_candidate_files_paginates() -> None:
     assert [f["id"] for f in files] == ["f1", "f2"]
 
 
+async def test_list_applications_pagination() -> None:
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/applications"
+        assert request.url.params.get("limit") == "100"
+        cursor = request.url.params.get("cursor") or None
+        seen.append(cursor)
+        if cursor is None:
+            return httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "a1", "jobId": "j1"}],
+                    "meta": {"pagination": {"nextCursor": "c2", "hasMore": True}},
+                },
+            )
+        assert cursor == "c2"
+        return httpx.Response(
+            200, json={"data": [{"id": "a2", "jobId": "j1"}], "meta": {"pagination": {"hasMore": False}}}
+        )
+
+    reads = _reads(handler)
+    page, nxt = await reads.list_applications()
+    assert [a["id"] for a in page] == ["a1"]
+    assert nxt == "c2"
+    page, nxt = await reads.list_applications(cursor=nxt)
+    assert [a["id"] for a in page] == ["a2"]
+    assert nxt is None
+    assert seen == [None, "c2"]
+
+
 async def test_errors_are_user_safe() -> None:
     def not_found(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"error": {"code": "x", "message": "nope"}})
