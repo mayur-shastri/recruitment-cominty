@@ -11,6 +11,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Both MCP services share flat top-level names (config/server/tools/services);
+# purge any other suite's bindings so this module resolves its own source.
+for _mod in [m for m in list(sys.modules) if m.split(".", 1)[0] in {"config", "server", "tools", "services"}]:
+    del sys.modules[_mod]
+
 import server
 
 

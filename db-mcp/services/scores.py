@@ -1,0 +1,152 @@
+"""Postgres-backed score/criteria store.
+
+Tools open one store per tool call and close it — stateless by
+construction (no shared engines), mirroring the Harly client's shape.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from config import get_db_mcp_settings
+from recruitment_db.models import ApplicationScore, ScoringCriteria
+
+
+class ScoresError(Exception):
+    """Store failure with user-safe details (never includes credentials or SQL internals)."""
+
+
+class ScoresNotFoundError(ScoresError):
+    """Requested criteria or score row does not exist."""
+
+
+def _is_postgres(url: str) -> bool:
+    return url.split(":", 1)[0] in {"postgres", "postgresql", "postgresql+asyncpg"}
+
+
+class ScoresStore:
+    """Score/criteria reads and writes over one short-lived engine."""
+
+    def __init__(self, database_url: str) -> None:
+        connect_args: dict[str, Any] = {}
+        if _is_postgres(database_url):
+            # Supabase pooler is pgbouncer (transaction mode): server-side prepared
+            # statements don't survive across checkouts, so disable the cache.
+            # (SQLite test URLs skip this: the option is asyncpg-only.)
+            connect_args = {"statement_cache_size": 0}
+        self._engine: AsyncEngine = create_async_engine(
+            database_url, poolclass=NullPool, pool_pre_ping=True, connect_args=connect_args
+        )
+        self._sessions = async_sessionmaker(self._engine, expire_on_commit=False)
+
+    def _session(self):
+        """Raw session factory. Tests use it to seed; tools use the methods below."""
+        return self._sessions()
+
+    async def aclose(self) -> None:
+        await self._engine.dispose()
+
+    async def get_criteria(self, job_id: str) -> dict[str, Any]:
+        try:
+            async with self._sessions() as session:
+                row = (
+                    await session.execute(
+                        select(ScoringCriteria).where(
+                            ScoringCriteria.job_id == job_id, ScoringCriteria.active.is_(True)
+                        )
+                    )
+                ).scalar_one_or_none()
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+        if row is None:
+            raise ScoresNotFoundError(f"no active scoring criteria for job {job_id!r}")
+        return {"job_id": row.job_id, "version": row.version, "criteria": row.criteria}
+
+    async def save_score(
+        self,
+        *,
+        application_id: str,
+        job_id: str,
+        candidate_id: str,
+        total_score: float,
+        breakdown: list,
+        criteria_version: int,
+        rationale: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            async with self._sessions() as session:
+                row = await session.get(ApplicationScore, application_id)
+                if row is None:
+                    row = ApplicationScore(
+                        application_id=application_id,
+                        job_id=job_id,
+                        candidate_id=candidate_id,
+                        total_score=total_score,
+                        breakdown=breakdown,
+                        criteria_version=criteria_version,
+                        rationale=rationale,
+                    )
+                    session.add(row)
+                else:
+                    row.job_id = job_id
+                    row.candidate_id = candidate_id
+                    row.total_score = total_score
+                    row.breakdown = breakdown
+                    row.criteria_version = criteria_version
+                    row.rationale = rationale
+                await session.commit()
+                return self._shape(row)
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+
+    async def get_score(self, application_id: str) -> dict[str, Any]:
+        try:
+            async with self._sessions() as session:
+                row = await session.get(ApplicationScore, application_id)
+                if row is None:
+                    raise ScoresNotFoundError(f"no saved score for application {application_id!r}")
+                return self._shape(row)
+        except ScoresNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+
+    async def list_top(self, job_id: str, limit: int) -> dict[str, Any]:
+        try:
+            async with self._sessions() as session:
+                rows = (
+                    await session.execute(
+                        select(ApplicationScore)
+                        .where(ApplicationScore.job_id == job_id)
+                        .order_by(ApplicationScore.total_score.desc())
+                        .limit(limit)
+                    )
+                ).scalars()
+                return {"job_id": job_id, "scores": [self._shape(row) for row in rows]}
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+
+    @staticmethod
+    def _shape(row: ApplicationScore) -> dict[str, Any]:
+        return {
+            "application_id": row.application_id,
+            "job_id": row.job_id,
+            "candidate_id": row.candidate_id,
+            "total_score": row.total_score,
+            "breakdown": row.breakdown,
+            "criteria_version": row.criteria_version,
+            "rationale": row.rationale,
+        }
+
+
+def get_scores_store() -> ScoresStore:
+    """Build a store from settings. Tools call this per invocation (stateless)."""
+    settings = get_db_mcp_settings()
+    if not settings.database_url:
+        raise ScoresError("DATABASE_URL is not configured")
+    return ScoresStore(database_url=settings.database_url)

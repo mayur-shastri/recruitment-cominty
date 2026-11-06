@@ -1,0 +1,35 @@
+# Scores MCP CD: deploy recruitment-dbmcp to the VPS on main changes.
+# Requires branch protection (db-mcp-ci green) so main is always deployable.
+# Shares the `vps-deploy` concurrency group: deploys serialize on one clone.
+# Secrets (environment: vps): VPS_HOST, VPS_USER, VPS_SSH_KEY.
+# If this change adds a DB migration, run it from the laptop FIRST.
+name: db-mcp-deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["db-mcp/**", ".github/workflows/db-mcp-deploy.yml"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: vps
+    steps:
+      - name: Pull, rebuild, restart over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd ~/recruitment-cominty
+            git pull --ff-only
+            cd db-mcp
+            docker compose up -d --build
+            docker inspect -f '{{.State.Status}}' recruitment-dbmcp

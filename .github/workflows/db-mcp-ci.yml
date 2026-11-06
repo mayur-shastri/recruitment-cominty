@@ -1,0 +1,22 @@
+# Scores MCP CI: runs iff db-mcp/**, db/** (or this file) changes.
+name: db-mcp-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["db-mcp/**", "db/**", ".github/workflows/db-mcp-ci.yml"]
+  pull_request:
+    paths: ["db-mcp/**", "db/**", ".github/workflows/db-mcp-ci.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install scores MCP deps
+        run: pip install -e ./db -r db-mcp/requirements.txt pytest pytest-asyncio aiosqlite
+      - name: Run tests
+        run: pytest db-mcp/tests -q

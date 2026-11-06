@@ -9,6 +9,7 @@ remains the ATS system of record.
 - `backend/` — FastAPI bridge (`app/`), tests (`tests/`)
 - `db/` — shared Postgres layer (`recruitment_db` package: models, engine, URL helper)
 - `ats-mcp/` — ATS MCP server (Milestone 2)
+- `db-mcp/` — scores MCP server (assessment storage)
 - `database/migrations/` — Alembic migrations (lands with backend foundation)
 - `docs/` — reference material dropped in from external docs
 
