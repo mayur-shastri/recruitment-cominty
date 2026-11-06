@@ -27,6 +27,10 @@ class FakeScoresStore:
         self.calls.append(("criteria", job_id))
         return {"job_id": job_id, "version": 2, "criteria": [{"label": "Go", "max_score": 50}]}
 
+    async def save_criteria(self, *, job_id, criteria, created_by=None):
+        self.calls.append(("save_criteria", job_id, criteria, created_by))
+        return {"job_id": job_id, "version": 3, "criteria": criteria}
+
     async def save_score(
         self,
         *,
@@ -177,6 +181,64 @@ async def test_save_forwards_and_returns(fake_store) -> None:
     assert call[1]["criteria_version"] == 2
 
 
+async def test_save_criteria_requires_confirmation(fake_store) -> None:
+    good = {
+        "job_id": "j1",
+        "criteria": [{"label": "Go", "max_score": 100}],
+        "confirmation": "HM: score Go out of 100",
+    }
+    with pytest.raises(ToolError, match="confirmation"):
+        await scores.save_scoring_criteria(**{**good, "confirmation": "  "})
+    assert fake_store.calls == []
+
+
+async def test_save_criteria_validates_shape(fake_store) -> None:
+    good = {
+        "job_id": "j1",
+        "criteria": [{"label": "Go", "max_score": 60}, {"label": "Comms", "max_score": 40}],
+        "confirmation": "HM: Go 60, comms 40",
+    }
+    with pytest.raises(ToolError, match="must not be blank"):
+        await scores.save_scoring_criteria(**{**good, "job_id": "  "})
+    with pytest.raises(ToolError, match="non-empty list"):
+        await scores.save_scoring_criteria(**{**good, "criteria": []})
+    with pytest.raises(ToolError, match="non-blank label"):
+        await scores.save_scoring_criteria(
+            **{**good, "criteria": [{"label": "  ", "max_score": 100}]}
+        )
+    with pytest.raises(ToolError, match="unique"):
+        await scores.save_scoring_criteria(
+            **{
+                **good,
+                "criteria": [
+                    {"label": "Go", "max_score": 50},
+                    {"label": "Go", "max_score": 50},
+                ],
+            }
+        )
+    with pytest.raises(ToolError, match="max_score"):
+        await scores.save_scoring_criteria(
+            **{**good, "criteria": [{"label": "Go", "max_score": 0}]}
+        )
+    with pytest.raises(ToolError, match="sum to 100"):
+        await scores.save_scoring_criteria(
+            **{**good, "criteria": [{"label": "Go", "max_score": 60}]}
+        )
+    assert fake_store.calls == []
+
+
+async def test_save_criteria_forwards_and_returns(fake_store) -> None:
+    criteria = [{"label": "Go", "max_score": 60}, {"label": "Comms", "max_score": 40}]
+    result = await scores.save_scoring_criteria(
+        job_id="j1",
+        criteria=criteria,
+        confirmation="HM: Go 60, comms 40",
+        created_by="U1",
+    )
+    assert result["version"] == 3
+    assert fake_store.calls == [("save_criteria", "j1", criteria, "U1")]
+
+
 async def test_get_resume_passthrough(fake_store) -> None:
     assert await scores.get_application_resume("a1") == {
         "application_id": "a1",
@@ -213,6 +275,7 @@ def test_register_all_exposes_everything() -> None:
     registered = _registered("all")
     assert [name for name, _ in registered] == [
         "get_scoring_criteria",
+        "save_scoring_criteria",
         "save_application_score",
         "get_application_score",
         "list_top_applications",
@@ -230,6 +293,7 @@ def test_register_profiles_split_read_write() -> None:
     ]
     assert [name for name, _ in _registered("read")] == [
         "get_scoring_criteria",
+        "save_scoring_criteria",
         "get_application_score",
         "list_top_applications",
         "get_application_resume",

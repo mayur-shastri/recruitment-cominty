@@ -59,6 +59,33 @@ async def test_get_criteria_missing_raises(store: ScoresStore) -> None:
         await store.get_criteria("j9")
 
 
+async def test_save_criteria_versions_and_deactivates(store: ScoresStore) -> None:
+    first = await store.save_criteria(
+        job_id="j1",
+        criteria=[{"label": "Go", "max_score": 60}, {"label": "Comms", "max_score": 40}],
+        created_by="U1",
+    )
+    assert first["version"] == 1
+    second = await store.save_criteria(
+        job_id="j1",
+        criteria=[{"label": "Go", "max_score": 100}],
+        created_by="U1",
+    )
+    assert second["version"] == 2
+    assert await store.get_criteria("j1") == {
+        "job_id": "j1",
+        "version": 2,
+        "criteria": [{"label": "Go", "max_score": 100}],
+    }
+
+
+async def test_save_criteria_versions_are_per_job(store: ScoresStore) -> None:
+    await store.save_criteria(job_id="j1", criteria=[{"label": "Go", "max_score": 100}])
+    other = await store.save_criteria(job_id="j2", criteria=[{"label": "Go", "max_score": 100}])
+    assert other["version"] == 1
+    assert (await store.get_criteria("j2"))["version"] == 1
+
+
 async def test_save_and_get_round_trip(store: ScoresStore) -> None:
     saved = await store.save_score(
         application_id="a1",
