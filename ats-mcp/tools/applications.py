@@ -1,4 +1,9 @@
-"""Application tools for the Recruiter Agent (M2.2a: reads; M2.2b: decisions)."""
+"""Application tools (M2.2a: reads; M2.2b: decisions; M3.3: scorecard mirror).
+
+Decision tools require HM-quoting confirmation. create_scorecard is the
+exception: it serves headless assessment runs, which have no Hiring Manager
+instruction to quote (same rationale as the db-mcp save tool).
+"""
 
 from __future__ import annotations
 
@@ -90,6 +95,40 @@ async def hire_application(application_id: str, confirmation: str) -> dict[str, 
         await client.aclose()
 
 
+async def create_scorecard(
+    candidate_id: str,
+    rating: str,
+    application_id: str | None = None,
+    comment: str | None = None,
+    criteria: list | None = None,
+) -> dict[str, Any]:
+    """Mirror an assessment score into Harly (see tool description)."""
+    _require_non_blank(candidate_id, "candidate_id")
+    if rating not in ("strong", "mixed", "weak"):
+        raise ToolError(f"unknown rating {rating!r}: expected strong, mixed, or weak")
+    if criteria is not None:
+        for entry in criteria:
+            if not isinstance(entry, dict) or not str(entry.get("label", "")).strip():
+                raise ToolError("criteria entries need a non-blank label.")
+            score = entry.get("score")
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                raise ToolError("criteria entries need a numeric score.")
+    kwargs: dict[str, Any] = {}
+    if application_id is not None:
+        kwargs["application_id"] = application_id
+    if comment is not None:
+        kwargs["comment"] = comment
+    if criteria is not None:
+        kwargs["criteria"] = criteria
+    client = get_harly_client()
+    try:
+        return await client.create_scorecard(candidate_id, rating, **kwargs)
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
 def register_tools(mcp: Any) -> None:
     """Register application tools on the MCP server."""
     mcp.tool(
@@ -135,3 +174,15 @@ def register_tools(mcp: Any) -> None:
             "instruction. Returns the hired application."
         ),
     )(hire_application)
+    mcp.tool(
+        name="create_scorecard",
+        description=(
+            "Record an assessment scorecard on a Harly candidate (mirror of the "
+            "Postgres score). Assessment-agent only: call after "
+            "save_application_score with the same breakdown as criteria "
+            "({label, score} entries), the total and rubric version in comment, "
+            "and rating mapped from the total (strong/mixed/weak). No "
+            "confirmation: headless scoring runs have no Hiring Manager "
+            "instruction to quote. Returns the created scorecard."
+        ),
+    )(create_scorecard)

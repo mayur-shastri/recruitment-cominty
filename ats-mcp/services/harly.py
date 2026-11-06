@@ -141,6 +141,27 @@ class HarlyClient:
         env = await self._request("POST", f"/api/v1/applications/{application_id}/hire")
         return env.get("data", {})
 
+    # -- scorecards (M3.3 mirror) ----------------------------------------------
+
+    async def create_scorecard(
+        self,
+        candidate_id: str,
+        rating: str,
+        *,
+        application_id: str | None = None,
+        comment: str | None = None,
+        criteria: list | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"candidateId": candidate_id, "rating": rating}
+        if application_id is not None:
+            body["applicationId"] = application_id
+        if comment is not None:
+            body["comment"] = comment
+        if criteria is not None:
+            body["criteria"] = criteria
+        env = await self._request("POST", "/api/v1/scorecards", json_body=body)
+        return env.get("data", {})
+
     # -- jobs: writes (M2.1b/c) ------------------------------------------------
 
     async def create_job(

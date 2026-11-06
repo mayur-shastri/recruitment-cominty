@@ -85,6 +85,31 @@ class ApplicationScore(Base):
     )
 
 
+class HarlyEvent(Base):
+    """Harly webhook dedupe: one row per delivery event ID (at-least-once)."""
+
+    __tablename__ = "harly_events"
+
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ApplicationResume(Base):
+    """Resolved public resume URL per application (S3 join; the agent fetches it)."""
+
+    __tablename__ = "application_resumes"
+
+    application_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    resume_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class JobInterviewConfig(Base):
     """Per-job interview readiness: rounds with date windows and interviewer pools."""
 

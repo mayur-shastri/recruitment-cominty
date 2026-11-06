@@ -398,3 +398,34 @@ async def test_reorder_job_stages_posts_ids() -> None:
         await client.aclose()
     assert (seen["method"], seen["path"]) == ("POST", "/api/v1/jobs/j1/stages/reorder")
     assert seen["body"] == {"stageIds": ["s2", "s1"]}
+
+
+async def test_create_scorecard_posts_mirror() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"id": "sc1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        result = await client.create_scorecard(
+            "c1",
+            "strong",
+            application_id="a1",
+            comment="total 90 v2",
+            criteria=[{"label": "Go", "score": 45}],
+        )
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("POST", "/api/v1/scorecards")
+    assert seen["body"] == {
+        "candidateId": "c1",
+        "rating": "strong",
+        "applicationId": "a1",
+        "comment": "total 90 v2",
+        "criteria": [{"label": "Go", "score": 45}],
+    }
+    assert result == {"id": "sc1"}
