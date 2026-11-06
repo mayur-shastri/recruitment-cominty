@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -11,7 +13,7 @@ from app.api.harly import HarlyRuntime
 from app.integrations.harly.client import HarlyReadError
 from app.services import assessment_pipeline as pipeline
 from recruitment_db.database import Base
-from recruitment_db.models import ApplicationResume
+from recruitment_db.models import ApplicationResume, ApplicationScore, ScoringCriteria
 
 
 class FakeCominty:
@@ -27,11 +29,19 @@ class FakeCominty:
 
 
 class FakeReads:
-    def __init__(self, application: dict, files: list, stages: list, error: Exception | None = None):
+    def __init__(
+        self,
+        application: dict,
+        files: list,
+        stages: list,
+        error: Exception | None = None,
+        pages: list | None = None,
+    ):
         self._application = application
         self._files = files
         self._stages = stages
         self._error = error
+        self._pages = pages or []
 
     async def get_application(self, application_id: str):
         if self._error:
@@ -44,6 +54,14 @@ class FakeReads:
 
     async def list_job_stages(self, job_id: str):
         return self._stages
+
+    async def list_applications(self, *, limit: int = 100, cursor: str | None = None):
+        if self._error:
+            raise self._error
+        idx = 0 if cursor is None else int(cursor)
+        page = self._pages[idx] if 0 <= idx < len(self._pages) else []
+        nxt = str(idx + 1) if idx + 1 < len(self._pages) else None
+        return page, nxt
 
 
 @pytest.fixture
@@ -171,3 +189,178 @@ async def test_stage_change_other_kind_ignored(factory, monkeypatch) -> None:
         "status": "ignored",
         "reason": "no application id",
     }
+
+
+async def _seed(factory, *, scores=(), resumes=(), criteria=()) -> None:
+    async with factory() as session:
+        for app_id, job_id in scores:
+            session.add(
+                ApplicationScore(
+                    application_id=app_id,
+                    job_id=job_id,
+                    candidate_id="c",
+                    total_score=80.0,
+                    breakdown=[],
+                    criteria_version=1,
+                )
+            )
+        for app_id in resumes:
+            session.add(
+                ApplicationResume(
+                    application_id=app_id,
+                    resume_url="https://pub.test/r.pdf",
+                    file_name="r.pdf",
+                    file_size=10,
+                )
+            )
+        for job_id, version, active in criteria:
+            session.add(
+                ScoringCriteria(job_id=job_id, version=version, criteria=[], active=active)
+            )
+        await session.commit()
+
+
+def _patch_sweep(monkeypatch, pages, process=None):
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: FakeReads({}, [], [], pages=pages))
+    calls: list = []
+
+    async def fake_process(runtime, app_id: str):
+        calls.append(app_id)
+        if process is not None:
+            return await process(runtime, app_id)
+        return {"status": "triggered"}
+
+    monkeypatch.setattr(pipeline, "process_new_application", fake_process)
+    return calls
+
+
+async def test_sweep_triggers_only_unscored(factory, monkeypatch) -> None:
+    await _seed(
+        factory,
+        scores=[("a1", "j1")],
+        resumes=["a2"],
+        criteria=[("j1", 1, True)],
+    )
+    pages = [
+        [
+            {"id": "a1", "jobId": "j1"},
+            {"id": "a2", "jobId": "j1"},
+            {"id": "a3", "jobId": "j1"},
+            {"id": "a4", "jobId": "j2"},
+            {"id": None, "jobId": "j1"},
+            {"id": "a5"},
+        ]
+    ]
+    calls = _patch_sweep(monkeypatch, pages)
+    result = await pipeline.sweep_unscored_applications(_runtime(factory))
+    assert result["status"] == "ok"
+    assert result["checked"] == 4
+    assert result["triggered"] == 1
+    assert result["skipped_scored"] == 1
+    assert result["skipped_inflight"] == 1
+    assert result["skipped_no_criteria"] == 1
+    assert result["failed"] == 0
+    assert calls == ["a3"]
+
+
+async def test_sweep_paginates_and_respects_max_pages(factory, monkeypatch) -> None:
+    await _seed(factory, criteria=[("j1", 1, True)])
+    pages = [[{"id": "a1", "jobId": "j1"}], [{"id": "a2", "jobId": "j1"}]]
+    calls = _patch_sweep(monkeypatch, pages)
+    result = await pipeline.sweep_unscored_applications(_runtime(factory))
+    assert result["triggered"] == 2
+    assert calls == ["a1", "a2"]
+
+    pages3 = [[{"id": "a1", "jobId": "j1"}], [{"id": "a2", "jobId": "j1"}], [{"id": "a3", "jobId": "j1"}]]
+    calls3 = _patch_sweep(monkeypatch, pages3)
+    result = await pipeline.sweep_unscored_applications(_runtime(factory), max_pages=2)
+    assert result["triggered"] == 2
+    assert calls3 == ["a1", "a2"]
+
+
+async def test_sweep_isolates_process_failures(factory, monkeypatch) -> None:
+    await _seed(factory, criteria=[("j1", 1, True)])
+    pages = [[{"id": "a1", "jobId": "j1"}, {"id": "a2", "jobId": "j1"}]]
+
+    async def flaky(runtime, app_id: str):
+        if app_id == "a1":
+            raise RuntimeError("agent down")
+        return {"status": "triggered"}
+
+    calls = _patch_sweep(monkeypatch, pages, process=flaky)
+    result = await pipeline.sweep_unscored_applications(_runtime(factory))
+    assert result["triggered"] == 1
+    assert result["failed"] == 1
+    assert calls == ["a1", "a2"]
+
+
+async def test_sweep_skips_when_unconfigured(factory) -> None:
+    result = await pipeline.sweep_unscored_applications(_runtime(factory, assessment_agent_id=""))
+    assert result["status"] == "skipped"
+
+    result = await pipeline.sweep_unscored_applications(
+        _runtime(factory, harly_base_url="", harly_api_key="")
+    )
+    assert result == {
+        "status": "skipped",
+        "reason": "harly not configured",
+        "checked": 0,
+        "triggered": 0,
+        "skipped_scored": 0,
+        "skipped_inflight": 0,
+        "skipped_no_criteria": 0,
+        "failed": 0,
+    }
+
+
+async def test_sweep_harly_list_failure(factory, monkeypatch) -> None:
+    monkeypatch.setattr(
+        pipeline, "HarlyReads", lambda *a, **k: FakeReads({}, [], [], error=HarlyReadError("down"))
+    )
+    result = await pipeline.sweep_unscored_applications(_runtime(factory))
+    assert result["status"] == "error"
+    assert result["reason"] == "harly list failed"
+
+
+async def test_poll_loop_runs_until_cancelled(factory, monkeypatch) -> None:
+    calls: list = []
+
+    async def fake_sweep(runtime):
+        calls.append(1)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(pipeline, "sweep_unscored_applications", fake_sweep)
+    task = asyncio.create_task(pipeline.run_poll_loop(_runtime(factory), interval_s=3600))
+    for _ in range(200):
+        if calls:
+            break
+        await asyncio.sleep(0.01)
+    assert calls == [1]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_poll_loop_survives_sweep_errors(factory, monkeypatch) -> None:
+    calls: list = []
+
+    async def flaky(runtime):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return {"status": "ok"}
+
+    monkeypatch.setattr(pipeline, "sweep_unscored_applications", flaky)
+    task = asyncio.create_task(pipeline.run_poll_loop(_runtime(factory), interval_s=0.01))
+    try:
+        for _ in range(200):
+            if len(calls) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(calls) >= 2
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

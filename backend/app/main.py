@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from cominty_sdk import AgentCapabilities, AsyncCominty, McpCapability, WebCapability
 from fastapi import FastAPI, Request
@@ -18,6 +19,7 @@ from app.api.harly import HarlyRuntime, router as harly_router
 from app.api.slack import Runtime, router as slack_router
 from app.config import get_settings
 from app.logging_setup import setup_logging
+from app.services.assessment_pipeline import run_poll_loop
 from app.services.cominty import ATS_CONNECTION_ID, ComintyService
 from recruitment_db.database import create_engine_and_sessions
 from recruitment_db.urls import to_async_database_url
@@ -100,7 +102,19 @@ async def lifespan(app: FastAPI):
             s3_workspace_id=settings.harly_s3_workspace_id,
             s3_public_url=settings.harly_s3_public_url,
         )
+    if settings.assessment_poll_enabled and not hasattr(app.state, "poll_task"):
+        app.state.poll_task = asyncio.create_task(
+            run_poll_loop(
+                app.state.harly_runtime, interval_s=settings.assessment_poll_interval_s
+            )
+        )
+        logger.info("assessment poll every %ss", settings.assessment_poll_interval_s)
     yield
+    poll_task = getattr(app.state, "poll_task", None)
+    if poll_task is not None:
+        poll_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await poll_task
     runtime = getattr(app.state, "runtime", None)
     if runtime is not None:
         await runtime.cominty.aclose()

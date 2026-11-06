@@ -55,6 +55,16 @@ class HarlyReads:
         env = await self._get(f"/api/v1/applications/{application_id}")
         return env.get("data", {})
 
+    async def list_applications(
+        self, *, limit: int = 100, cursor: str | None = None
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """One page of applications + the next cursor (None when exhausted)."""
+        env = await self._get("/api/v1/applications", {"limit": limit, "cursor": cursor})
+        data = env.get("data", [])
+        meta = env.get("meta", {}).get("pagination", {})
+        next_cursor = meta.get("nextCursor") if meta.get("hasMore") else None
+        return data, next_cursor
+
     async def list_candidate_files(self, candidate_id: str) -> list[dict[str, Any]]:
         files: list[dict[str, Any]] = []
         cursor: str | None = None

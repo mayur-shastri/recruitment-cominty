@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # refuses with a clear error instead of failing the whole bridge.
     cominty_assessment_agent_id: str = ""
     cominty_db_mcp_connection_id: str = ""
+    # Polling fallback: sweep unscored applications every interval (Harly
+    # webhooks are broken upstream). Disable to rely on webhooks alone.
+    assessment_poll_enabled: bool = True
+    assessment_poll_interval_s: float = 300.0
 
     # Harly API reads + webhook verification for the assessment pipeline.
     harly_base_url: str = ""
