@@ -125,6 +125,22 @@ class HarlyClient:
         env = await self._request("GET", f"/api/v1/candidates/{candidate_id}")
         return env.get("data", {})
 
+    # -- applications: decisions (M2.2b) ---------------------------------------
+
+    async def move_application(self, application_id: str, to_stage_id: str) -> dict[str, Any]:
+        env = await self._request(
+            "POST", f"/api/v1/applications/{application_id}/move", json_body={"toStageId": to_stage_id}
+        )
+        return env.get("data", {})
+
+    async def reject_application(self, application_id: str) -> dict[str, Any]:
+        env = await self._request("POST", f"/api/v1/applications/{application_id}/reject")
+        return env.get("data", {})
+
+    async def hire_application(self, application_id: str) -> dict[str, Any]:
+        env = await self._request("POST", f"/api/v1/applications/{application_id}/hire")
+        return env.get("data", {})
+
     # -- jobs: writes (M2.1b/c) ------------------------------------------------
 
     async def create_job(
@@ -218,6 +234,62 @@ class HarlyClient:
     async def delete_job(self, job_id: str) -> dict[str, Any]:
         """Soft-delete (status reverts to closed). Test cleanup only — never an MCP tool."""
         env = await self._request("DELETE", f"/api/v1/jobs/{job_id}")
+        return env.get("data", {})
+
+    # -- job stages: writes --------------------------------------------------
+
+    async def create_job_stage(
+        self,
+        job_id: str,
+        *,
+        name: str,
+        kind: str | None = None,
+        color: str | None = None,
+        position: int | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"name": name}
+        if kind is not None:
+            body["kind"] = kind
+        if color is not None:
+            body["color"] = color
+        if position is not None:
+            body["position"] = position
+        env = await self._request("POST", f"/api/v1/jobs/{job_id}/stages", json_body=body)
+        return env.get("data", {})
+
+    async def update_job_stage(
+        self,
+        job_id: str,
+        stage_id: str,
+        *,
+        name: str | None = None,
+        color: str | None = None,
+        kind: str | None = None,
+    ) -> dict[str, Any]:
+        provided = {"name": name, "color": color, "kind": kind}
+        body = {key: value for key, value in provided.items() if value is not None}
+        env = await self._request(
+            "PATCH", f"/api/v1/jobs/{job_id}/stages/{stage_id}", json_body=body
+        )
+        return env.get("data", {})
+
+    async def delete_job_stage(self, job_id: str, stage_id: str) -> dict[str, Any]:
+        env = await self._request("DELETE", f"/api/v1/jobs/{job_id}/stages/{stage_id}")
+        return env.get("data", {})
+
+    async def archive_job_stage(
+        self, job_id: str, stage_id: str, merge_into_stage_id: str | None = None
+    ) -> dict[str, Any]:
+        body = {"mergeIntoStageId": merge_into_stage_id} if merge_into_stage_id is not None else None
+        env = await self._request(
+            "POST", f"/api/v1/jobs/{job_id}/stages/{stage_id}/archive", json_body=body
+        )
+        return env.get("data", {})
+
+    async def reorder_job_stages(self, job_id: str, stage_ids: list[str]) -> dict[str, Any]:
+        env = await self._request(
+            "POST", f"/api/v1/jobs/{job_id}/stages/reorder", json_body={"stageIds": stage_ids}
+        )
         return env.get("data", {})
 
     # -- transport -----------------------------------------------------------

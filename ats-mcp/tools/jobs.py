@@ -1,4 +1,4 @@
-"""Job tools for the Recruiter Agent (M2.1: reads + writes)."""
+"""Job and pipeline-stage tools for the Recruiter Agent (M2.1: reads + writes)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,16 @@ _JOB_STATUSES = ("draft", "open", "closed")
 _EMPLOYMENT_TYPES = ("full_time", "part_time", "contract", "internship")
 _WORKPLACE_TYPES = ("remote", "hybrid", "onsite")
 _SALARY_PERIODS = ("annual", "monthly")
+_STAGE_KINDS = (
+    "applied",
+    "screening",
+    "interview",
+    "offer",
+    "hired",
+    "rejected",
+    "withdrawn",
+    "custom",
+)
 
 
 def _require_enum(value: str | None, allowed: tuple[str, ...], field: str) -> None:
@@ -191,6 +201,110 @@ async def close_job(job_id: str, confirmation: str) -> dict[str, Any]:
         await client.aclose()
 
 
+async def create_job_stage(
+    job_id: str,
+    name: str,
+    confirmation: str,
+    kind: str | None = None,
+    color: str | None = None,
+    position: int | None = None,
+) -> dict[str, Any]:
+    """Add a stage to a Harly job's pipeline (see tool description)."""
+    _require_confirmation(confirmation, "create_job_stage")
+    _require_non_blank(name, "name")
+    if len(name.strip()) > 120:
+        raise ToolError(f"stage name accepts at most 120 characters, got {len(name.strip())}")
+    _require_enum(kind, _STAGE_KINDS, "kind")
+    if position is not None and position < 0:
+        raise ToolError(f"position must be 0 or more, got {position}")
+    kwargs: dict[str, Any] = {"name": name}
+    if kind is not None:
+        kwargs["kind"] = kind
+    if color is not None:
+        kwargs["color"] = color
+    if position is not None:
+        kwargs["position"] = position
+    client = get_harly_client()
+    try:
+        return await client.create_job_stage(job_id, **kwargs)
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
+async def update_job_stage(
+    job_id: str,
+    stage_id: str,
+    confirmation: str,
+    name: str | None = None,
+    color: str | None = None,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    """Edit a Harly job's pipeline stage (see tool description)."""
+    _require_confirmation(confirmation, "update_job_stage")
+    _require_non_blank(name, "name")
+    _require_enum(kind, _STAGE_KINDS, "kind")
+    provided = {"name": name, "color": color, "kind": kind}
+    fields = {key: value for key, value in provided.items() if value is not None}
+    if not fields:
+        raise ToolError("update_job_stage needs at least one field to change.")
+    client = get_harly_client()
+    try:
+        return await client.update_job_stage(job_id, stage_id, **fields)
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
+async def delete_job_stage(job_id: str, stage_id: str, confirmation: str) -> dict[str, Any]:
+    """Permanently delete a Harly job's pipeline stage (see tool description)."""
+    _require_confirmation(confirmation, "delete_job_stage")
+    client = get_harly_client()
+    try:
+        return await client.delete_job_stage(job_id, stage_id)
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
+async def archive_job_stage(
+    job_id: str, stage_id: str, confirmation: str, merge_into_stage_id: str | None = None
+) -> dict[str, Any]:
+    """Archive a Harly job's pipeline stage (see tool description)."""
+    _require_confirmation(confirmation, "archive_job_stage")
+    kwargs: dict[str, Any] = {}
+    if merge_into_stage_id is not None:
+        kwargs["merge_into_stage_id"] = merge_into_stage_id
+    client = get_harly_client()
+    try:
+        return await client.archive_job_stage(job_id, stage_id, **kwargs)
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
+async def reorder_job_stages(
+    job_id: str, stage_ids: list[str], confirmation: str
+) -> dict[str, Any]:
+    """Reorder a Harly job's pipeline stages (see tool description)."""
+    _require_confirmation(confirmation, "reorder_job_stages")
+    if not stage_ids:
+        raise ToolError("reorder_job_stages needs at least one stage ID.")
+    if len(stage_ids) > 100:
+        raise ToolError(f"reorder_job_stages accepts at most 100 stage IDs, got {len(stage_ids)}")
+    client = get_harly_client()
+    try:
+        return await client.reorder_job_stages(job_id, stage_ids)
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
 def register_tools(mcp: Any) -> None:
     """Register job tools on an MCPServer (or compatible stub in tests)."""
     mcp.tool(
@@ -214,8 +328,10 @@ def register_tools(mcp: Any) -> None:
         name="list_job_stages",
         description=(
             "List the ordered pipeline stages of a Harly job (id, name, order, "
-            "kind such as applied/screening/interview/offer/hired). Use to explain "
-            "the hiring process or to resolve the stage ID a later application "
+            "kind such as applied/screening/interview/offer/hired). A new job "
+            "starts with Harly's default stages — show them to the Hiring Manager "
+            "and ask whether to keep, rename, add, remove, or reorder them before "
+            "publishing. Also use to resolve the stage ID a later application "
             "move needs."
         ),
     )(list_job_stages)
@@ -229,8 +345,11 @@ def register_tools(mcp: Any) -> None:
             "location, requirements, benefits, keywords (up to 50 strings), "
             "salary_min and salary_max (integers 0 or more), currency (max 8 chars, "
             "e.g. USD), salary_period (annual or monthly). Use only after the Hiring "
-            "Manager approves the draft description. Returns the created job with "
-            "id, slug, and status."
+            "Manager approves the draft description. Workflow: right after creating, "
+            "call list_job_stages, show the starting pipeline to the Hiring Manager, "
+            "ask whether they want to add, rename, remove, or reorder stages, apply "
+            "any changes with the stage tools, and only then publish. Returns the "
+            "created job with id, slug, and status."
         ),
     )(create_job)
     mcp.tool(
@@ -250,7 +369,10 @@ def register_tools(mcp: Any) -> None:
         description=(
             "Publish a draft Harly job (status becomes open). Requires "
             "confirmation: quote the Hiring Manager's publish instruction. Use "
-            "only after explicit approval to publish. Returns the published job."
+            "only after explicit approval to publish AND after the Hiring Manager "
+            "has confirmed the pipeline stages (offered at creation time via "
+            "list_job_stages; customized with the stage tools if asked). Returns "
+            "the published job."
         ),
     )(publish_job)
     mcp.tool(
@@ -261,3 +383,52 @@ def register_tools(mcp: Any) -> None:
             "ends or the role is cancelled. Returns the closed job."
         ),
     )(close_job)
+    mcp.tool(
+        name="create_job_stage",
+        description=(
+            "Add a stage to a Harly job's hiring pipeline. Required: job_id, name "
+            "(1-120 chars), confirmation quoting the Hiring Manager's instruction. "
+            "Optional: kind (one of: applied, screening, interview, offer, hired, "
+            "rejected, withdrawn, custom — use custom for anything outside the "
+            "standard set), color (short label, e.g. a color name), position "
+            "(0-based slot; appended at the end when omitted). Part of the "
+            "creation-time workflow: list stages, ask the Hiring Manager, apply "
+            "changes, then publish. Returns the created stage with its id."
+        ),
+    )(create_job_stage)
+    mcp.tool(
+        name="update_job_stage",
+        description=(
+            "Rename or reconfigure one stage of a Harly job's pipeline (partial "
+            "update; at least one of name, color, kind required). Same kind values "
+            "as create_job_stage. Requires confirmation: quote the Hiring Manager's "
+            "instruction. Returns the updated stage."
+        ),
+    )(update_job_stage)
+    mcp.tool(
+        name="delete_job_stage",
+        description=(
+            "Permanently delete one stage of a Harly job's pipeline. Prefer "
+            "archive_job_stage when applications may already sit in the stage. "
+            "Requires confirmation: quote the Hiring Manager's instruction. "
+            "Returns the deleted stage."
+        ),
+    )(delete_job_stage)
+    mcp.tool(
+        name="archive_job_stage",
+        description=(
+            "Archive (soft-remove) one stage of a Harly job's pipeline. Optional "
+            "merge_into_stage_id moves the archived stage's applications into "
+            "another stage instead of leaving them behind. Requires confirmation: "
+            "quote the Hiring Manager's instruction. Returns the archived stage."
+        ),
+    )(archive_job_stage)
+    mcp.tool(
+        name="reorder_job_stages",
+        description=(
+            "Reorder a Harly job's pipeline: pass the full ordered list of stage "
+            "IDs (1-100, from list_job_stages) in the desired order. Requires "
+            "confirmation: quote the Hiring Manager's instruction. Returns the "
+            "job's updated pipeline."
+        ),
+    )(reorder_job_stages)
