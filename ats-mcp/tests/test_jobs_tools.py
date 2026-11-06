@@ -47,6 +47,26 @@ class FakeHarlyClient:
         self.calls.append(("close", job_id))
         return {"id": job_id, "status": "closed"}
 
+    async def create_job_stage(self, job_id, **kwargs):
+        self.calls.append(("create_stage", job_id, kwargs))
+        return {"id": "s9", "jobId": job_id, **kwargs}
+
+    async def update_job_stage(self, job_id, stage_id, **kwargs):
+        self.calls.append(("update_stage", job_id, stage_id, kwargs))
+        return {"id": stage_id}
+
+    async def delete_job_stage(self, job_id, stage_id):
+        self.calls.append(("delete_stage", job_id, stage_id))
+        return {"id": stage_id}
+
+    async def archive_job_stage(self, job_id, stage_id, **kwargs):
+        self.calls.append(("archive_stage", job_id, stage_id, kwargs))
+        return {"id": stage_id}
+
+    async def reorder_job_stages(self, job_id, stage_ids):
+        self.calls.append(("reorder_stages", job_id, stage_ids))
+        return {"jobId": job_id}
+
     async def aclose(self) -> None:
         pass
 
@@ -117,6 +137,11 @@ def test_register_tools_registers_three_named_tools() -> None:
         "update_job",
         "publish_job",
         "close_job",
+        "create_job_stage",
+        "update_job_stage",
+        "delete_job_stage",
+        "archive_job_stage",
+        "reorder_job_stages",
     ]
     assert all(description for _, description in stub.registered)
 
@@ -169,3 +194,60 @@ async def test_publish_close_require_confirmation(fake_client) -> None:
         await jobs.close_job("j1", "  ")
     assert await jobs.publish_job("j1", "HM said publish") == {"id": "j1", "status": "open"}
     assert await jobs.close_job("j1", "HM said close") == {"id": "j1", "status": "closed"}
+
+
+async def test_stage_writes_require_confirmation(fake_client) -> None:
+    with pytest.raises(ToolError, match="confirmation"):
+        await jobs.create_job_stage("j1", "Onsite", "")
+    with pytest.raises(ToolError, match="confirmation"):
+        await jobs.update_job_stage("j1", "s1", "  ", name="Final")
+    with pytest.raises(ToolError, match="confirmation"):
+        await jobs.delete_job_stage("j1", "s1", "")
+    with pytest.raises(ToolError, match="confirmation"):
+        await jobs.archive_job_stage("j1", "s1", "  ")
+    with pytest.raises(ToolError, match="confirmation"):
+        await jobs.reorder_job_stages("j1", ["s1"], "")
+    assert fake_client.calls == []
+
+
+async def test_create_stage_validates_name_kind_position(fake_client) -> None:
+    with pytest.raises(ToolError, match="must not be blank"):
+        await jobs.create_job_stage("j1", "  ", "HM said add it")
+    with pytest.raises(ToolError, match="at most 120"):
+        await jobs.create_job_stage("j1", "x" * 121, "HM said add it")
+    with pytest.raises(ToolError, match="kind"):
+        await jobs.create_job_stage("j1", "Onsite", "HM said add it", kind="bogus")
+    with pytest.raises(ToolError, match="position"):
+        await jobs.create_job_stage("j1", "Onsite", "HM said add it", position=-1)
+    assert fake_client.calls == []
+
+
+async def test_update_stage_needs_field_and_valid_kind(fake_client) -> None:
+    with pytest.raises(ToolError, match="at least one field"):
+        await jobs.update_job_stage("j1", "s1", "HM said edit it")
+    with pytest.raises(ToolError, match="kind"):
+        await jobs.update_job_stage("j1", "s1", "HM said edit it", kind="bogus")
+    assert fake_client.calls == []
+
+
+async def test_reorder_validates_ids(fake_client) -> None:
+    with pytest.raises(ToolError, match="at least one stage"):
+        await jobs.reorder_job_stages("j1", [], "HM said reorder")
+    with pytest.raises(ToolError, match="at most 100"):
+        await jobs.reorder_job_stages("j1", ["s"] * 101, "HM said reorder")
+    assert fake_client.calls == []
+
+
+async def test_stage_writes_forward(fake_client) -> None:
+    await jobs.create_job_stage("j1", "Onsite", "HM said add it", kind="interview", position=3)
+    await jobs.update_job_stage("j1", "s1", "HM said edit it", name="Final")
+    await jobs.delete_job_stage("j1", "s1", "HM said delete it")
+    await jobs.archive_job_stage("j1", "s1", "HM said archive it", merge_into_stage_id="s2")
+    await jobs.reorder_job_stages("j1", ["s2", "s1"], "HM said reorder")
+    assert fake_client.calls == [
+        ("create_stage", "j1", {"name": "Onsite", "kind": "interview", "position": 3}),
+        ("update_stage", "j1", "s1", {"name": "Final"}),
+        ("delete_stage", "j1", "s1"),
+        ("archive_stage", "j1", "s1", {"merge_into_stage_id": "s2"}),
+        ("reorder_stages", "j1", ["s2", "s1"]),
+    ]

@@ -265,3 +265,131 @@ async def test_get_candidate_passthrough() -> None:
         await client.aclose()
     assert (seen["method"], seen["path"]) == ("GET", "/api/v1/candidates/c1")
     assert result == {"id": "c1"}
+
+
+async def test_move_application_posts_stage() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"id": "a1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        result = await client.move_application("a1", "s1")
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("POST", "/api/v1/applications/a1/move")
+    assert seen["body"] == {"toStageId": "s1"}
+    assert result == {"id": "a1"}
+
+
+async def test_reject_and_hire_post_empty_bodies() -> None:
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.content))
+        return httpx.Response(200, json={"data": {"id": "a1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.reject_application("a1")
+        await client.hire_application("a1")
+    finally:
+        await client.aclose()
+    assert seen == [
+        ("POST", "/api/v1/applications/a1/reject", b""),
+        ("POST", "/api/v1/applications/a1/hire", b""),
+    ]
+
+
+async def test_create_job_stage_posts_name_and_provided() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"id": "s9"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        result = await client.create_job_stage("j1", name="Onsite", kind="interview", position=3)
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("POST", "/api/v1/jobs/j1/stages")
+    assert seen["body"] == {"name": "Onsite", "kind": "interview", "position": 3}
+    assert result == {"id": "s9"}
+
+
+async def test_update_job_stage_patches_provided_only() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"id": "s1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.update_job_stage("j1", "s1", name="Final")
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("PATCH", "/api/v1/jobs/j1/stages/s1")
+    assert seen["body"] == {"name": "Final"}
+
+
+async def test_delete_job_stage_uses_delete() -> None:
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.content))
+        return httpx.Response(200, json={"data": {"id": "s1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.delete_job_stage("j1", "s1")
+    finally:
+        await client.aclose()
+    assert seen == [("DELETE", "/api/v1/jobs/j1/stages/s1", b"")]
+
+
+async def test_archive_job_stage_with_and_without_merge() -> None:
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode()) if request.content else None
+        seen.append((request.method, request.url.path, body))
+        return httpx.Response(200, json={"data": {"id": "s1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.archive_job_stage("j1", "s1")
+        await client.archive_job_stage("j1", "s2", merge_into_stage_id="s3")
+    finally:
+        await client.aclose()
+    assert seen == [
+        ("POST", "/api/v1/jobs/j1/stages/s1/archive", None),
+        ("POST", "/api/v1/jobs/j1/stages/s2/archive", {"mergeIntoStageId": "s3"}),
+    ]
+
+
+async def test_reorder_job_stages_posts_ids() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"jobId": "j1"}, "meta": {}})
+
+    client = _client(handler)
+    try:
+        await client.reorder_job_stages("j1", ["s2", "s1"])
+    finally:
+        await client.aclose()
+    assert (seen["method"], seen["path"]) == ("POST", "/api/v1/jobs/j1/stages/reorder")
+    assert seen["body"] == {"stageIds": ["s2", "s1"]}

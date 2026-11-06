@@ -26,6 +26,18 @@ class FakeHarlyClient:
         self.calls.append(("get", application_id))
         return {"id": application_id}
 
+    async def move_application(self, application_id: str, to_stage_id: str):
+        self.calls.append(("move", application_id, to_stage_id))
+        return {"id": application_id, "currentStageId": to_stage_id}
+
+    async def reject_application(self, application_id: str):
+        self.calls.append(("reject", application_id))
+        return {"id": application_id, "status": "rejected"}
+
+    async def hire_application(self, application_id: str):
+        self.calls.append(("hire", application_id))
+        return {"id": application_id, "status": "hired"}
+
     async def aclose(self) -> None:
         pass
 
@@ -64,6 +76,41 @@ async def test_get_application_passthrough(fake_client) -> None:
     assert fake_client.calls == [("get", "a1")]
 
 
+async def test_move_reject_hire_require_confirmation(fake_client) -> None:
+    with pytest.raises(ToolError, match="confirmation"):
+        await applications.move_application("a1", "s1", "")
+    with pytest.raises(ToolError, match="confirmation"):
+        await applications.reject_application("a1", "  ")
+    with pytest.raises(ToolError, match="confirmation"):
+        await applications.hire_application("a1", "")
+    assert fake_client.calls == []
+
+
+async def test_move_rejects_blank_ids(fake_client) -> None:
+    with pytest.raises(ToolError, match="must not be blank"):
+        await applications.move_application("  ", "s1", "HM said move it")
+    with pytest.raises(ToolError, match="must not be blank"):
+        await applications.move_application("a1", "  ", "HM said move it")
+    assert fake_client.calls == []
+
+
+async def test_decisions_forward_and_return(fake_client) -> None:
+    assert await applications.move_application("a1", "s1", "HM said move to onsite") == {
+        "id": "a1",
+        "currentStageId": "s1",
+    }
+    assert await applications.reject_application("a1", "HM said reject") == {
+        "id": "a1",
+        "status": "rejected",
+    }
+    assert await applications.hire_application("a1", "HM said hire") == {"id": "a1", "status": "hired"}
+    assert fake_client.calls == [
+        ("move", "a1", "s1"),
+        ("reject", "a1"),
+        ("hire", "a1"),
+    ]
+
+
 async def test_harly_error_becomes_tool_error(monkeypatch) -> None:
     class Boom(FakeHarlyClient):
         async def get_application(self, application_id: str):
@@ -85,5 +132,11 @@ def test_register_tools_registers_named_tools() -> None:
 
     stub = StubMcp()
     applications.register_tools(stub)
-    assert [name for name, _ in stub.registered] == ["list_applications", "get_application"]
+    assert [name for name, _ in stub.registered] == [
+        "list_applications",
+        "get_application",
+        "move_application",
+        "reject_application",
+        "hire_application",
+    ]
     assert all(description for _, description in stub.registered)
