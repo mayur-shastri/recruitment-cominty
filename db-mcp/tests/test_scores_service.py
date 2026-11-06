@@ -119,3 +119,22 @@ async def test_list_top_orders_by_score_desc(store: ScoresStore) -> None:
 
 async def test_list_top_empty_job(store: ScoresStore) -> None:
     assert await store.list_top("j9", 10) == {"job_id": "j9", "scores": []}
+
+
+async def test_get_resume_round_trip(store: ScoresStore) -> None:
+    from recruitment_db.models import ApplicationResume
+
+    async with store._session() as session:
+        session.add(
+            ApplicationResume(
+                application_id="a1",
+                resume_url="https://pub.test/r.pdf",
+                file_name="r.pdf",
+                file_size=100,
+            )
+        )
+        await session.commit()
+    result = await store.get_resume("a1")
+    assert result["resume_url"] == "https://pub.test/r.pdf"
+    with pytest.raises(ScoresNotFoundError, match="a9"):
+        await store.get_resume("a9")

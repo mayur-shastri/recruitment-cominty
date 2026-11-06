@@ -3,7 +3,8 @@
 Assessment storage for Cominty agents, over stateless Streamable HTTP.
 
 Tools: `health`, `get_scoring_criteria`, `save_application_score`,
-`get_application_score`, `list_top_applications`. Set `DB_MCP_PROFILE` to
+`get_application_score`, `list_top_applications`, `get_application_resume`.
+Set `DB_MCP_PROFILE` to
 `read` (Recruiter Agent connection) or `write` (Assessment Agent
 connection) to narrow the surface; the default `all` is for dev. Run one
 container per profile in production (one Cominty connection each).

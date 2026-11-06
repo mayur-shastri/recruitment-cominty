@@ -94,6 +94,17 @@ async def get_application_score(application_id: str) -> dict[str, Any]:
         await store.aclose()
 
 
+async def get_application_resume(application_id: str) -> dict[str, Any]:
+    """Read the resume URL for one application (see tool description)."""
+    store = get_scores_store()
+    try:
+        return await store.get_resume(application_id)
+    except ScoresError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await store.aclose()
+
+
 async def list_top_applications(job_id: str, limit: int = 10) -> dict[str, Any]:
     """List a job's highest-scoring applications (see tool description)."""
     if not 1 <= limit <= 100:
@@ -145,13 +156,31 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
             "criteria version. Unscored applications never appear here.",
             list_top_applications,
         ),
+        (
+            "get_application_resume",
+            "Read the public resume URL for one Harly application (resolved by "
+            "the backend pipeline, not by agents). Assessment: call this before "
+            "scoring and fetch the file yourself — when it fails, fall back to "
+            "the candidate profile and note the gap in the rationale.",
+            get_application_resume,
+        ),
     ]
     if profile == "all":
         wanted = None
     elif profile == "write":
-        wanted = {"get_scoring_criteria", "save_application_score", "get_application_score"}
+        wanted = {
+            "get_scoring_criteria",
+            "save_application_score",
+            "get_application_score",
+            "get_application_resume",
+        }
     elif profile == "read":
-        wanted = {"get_scoring_criteria", "get_application_score", "list_top_applications"}
+        wanted = {
+            "get_scoring_criteria",
+            "get_application_score",
+            "list_top_applications",
+            "get_application_resume",
+        }
     else:
         raise ValueError(f"unknown db-mcp profile {profile!r}: expected all, read, or write")
     for name, description, fn in specs:

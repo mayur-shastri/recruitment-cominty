@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from config import get_db_mcp_settings
-from recruitment_db.models import ApplicationScore, ScoringCriteria
+from recruitment_db.models import ApplicationResume, ApplicationScore, ScoringCriteria
 
 
 class ScoresError(Exception):
@@ -128,6 +128,23 @@ class ScoresStore:
                     )
                 ).scalars()
                 return {"job_id": job_id, "scores": [self._shape(row) for row in rows]}
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
+
+    async def get_resume(self, application_id: str) -> dict[str, Any]:
+        try:
+            async with self._sessions() as session:
+                row = await session.get(ApplicationResume, application_id)
+                if row is None:
+                    raise ScoresNotFoundError(f"no resume URL for application {application_id!r}")
+                return {
+                    "application_id": row.application_id,
+                    "resume_url": row.resume_url,
+                    "file_name": row.file_name,
+                    "file_size": row.file_size,
+                }
+        except ScoresNotFoundError:
+            raise
         except SQLAlchemyError as exc:
             raise ScoresError("score store request failed") from exc
 

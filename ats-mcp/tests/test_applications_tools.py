@@ -43,6 +43,10 @@ class FakeHarlyClient:
         self.calls.append(("hire", application_id))
         return {"id": application_id, "status": "hired"}
 
+    async def create_scorecard(self, candidate_id: str, rating: str, **kwargs):
+        self.calls.append(("scorecard", candidate_id, rating, kwargs))
+        return {"id": "sc1"}
+
     async def aclose(self) -> None:
         pass
 
@@ -116,6 +120,32 @@ async def test_decisions_forward_and_return(fake_client) -> None:
     ]
 
 
+async def test_scorecard_validates(fake_client) -> None:
+    with pytest.raises(ToolError, match="must not be blank"):
+        await applications.create_scorecard("  ", "strong")
+    with pytest.raises(ToolError, match="rating"):
+        await applications.create_scorecard("c1", "bogus")
+    with pytest.raises(ToolError, match="criteria"):
+        await applications.create_scorecard("c1", "strong", criteria=[{"label": "  ", "score": 1}])
+    with pytest.raises(ToolError, match="criteria"):
+        await applications.create_scorecard("c1", "strong", criteria=[{"label": "Go"}])
+    assert fake_client.calls == []
+
+
+async def test_scorecard_forwards(fake_client) -> None:
+    assert await applications.create_scorecard(
+        "c1", "strong", application_id="a1", comment="total 90 v2", criteria=[{"label": "Go", "score": 45}]
+    ) == {"id": "sc1"}
+    assert fake_client.calls == [
+        (
+            "scorecard",
+            "c1",
+            "strong",
+            {"application_id": "a1", "comment": "total 90 v2", "criteria": [{"label": "Go", "score": 45}]},
+        )
+    ]
+
+
 async def test_harly_error_becomes_tool_error(monkeypatch) -> None:
     class Boom(FakeHarlyClient):
         async def get_application(self, application_id: str):
@@ -143,5 +173,6 @@ def test_register_tools_registers_named_tools() -> None:
         "move_application",
         "reject_application",
         "hire_application",
+        "create_scorecard",
     ]
     assert all(description for _, description in stub.registered)

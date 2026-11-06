@@ -58,6 +58,10 @@ class FakeScoresStore:
         self.calls.append(("get", application_id))
         return {"application_id": application_id, "total_score": 82.5}
 
+    async def get_resume(self, application_id: str):
+        self.calls.append(("resume", application_id))
+        return {"application_id": application_id, "resume_url": "https://pub.test/r.pdf"}
+
     async def list_top(self, job_id: str, limit: int):
         self.calls.append(("top", job_id, limit))
         return {"job_id": job_id, "scores": [{"application_id": "a1", "total_score": 90.0}]}
@@ -173,6 +177,14 @@ async def test_save_forwards_and_returns(fake_store) -> None:
     assert call[1]["criteria_version"] == 2
 
 
+async def test_get_resume_passthrough(fake_store) -> None:
+    assert await scores.get_application_resume("a1") == {
+        "application_id": "a1",
+        "resume_url": "https://pub.test/r.pdf",
+    }
+    assert fake_store.calls == [("resume", "a1")]
+
+
 async def test_not_found_becomes_tool_error(monkeypatch) -> None:
     class Missing(FakeScoresStore):
         async def get_score(self, application_id: str):
@@ -204,6 +216,7 @@ def test_register_all_exposes_everything() -> None:
         "save_application_score",
         "get_application_score",
         "list_top_applications",
+        "get_application_resume",
     ]
     assert all(description for _, description in registered)
 
@@ -213,11 +226,13 @@ def test_register_profiles_split_read_write() -> None:
         "get_scoring_criteria",
         "save_application_score",
         "get_application_score",
+        "get_application_resume",
     ]
     assert [name for name, _ in _registered("read")] == [
         "get_scoring_criteria",
         "get_application_score",
         "list_top_applications",
+        "get_application_resume",
     ]
 
 

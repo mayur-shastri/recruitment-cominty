@@ -28,6 +28,25 @@ class Settings(BaseSettings):
     cominty_user_id: str
     cominty_recruiter_agent_id: str
     cominty_timeout_s: float = 300.0
+    # Assessment pipeline (M3.3). Empty means "not configured": the trigger
+    # refuses with a clear error instead of failing the whole bridge.
+    cominty_assessment_agent_id: str = ""
+    cominty_db_mcp_connection_id: str = ""
+
+    # Harly API reads + webhook verification for the assessment pipeline.
+    harly_base_url: str = ""
+    harly_api_key: str = ""
+    harly_webhook_secret_application_created: str = ""
+    harly_webhook_secret_stage_changed: str = ""
+
+    # Harly resume storage (R2) for the in-house extraction pipeline.
+    harly_s3_endpoint: str = ""
+    harly_s3_bucket: str = ""
+    harly_s3_region: str = "auto"
+    harly_s3_access_key_id: str = ""
+    harly_s3_secret_access_key: str = ""
+    harly_s3_workspace_id: str = ""
+    harly_s3_public_url: str = ""
 
 
 @lru_cache
