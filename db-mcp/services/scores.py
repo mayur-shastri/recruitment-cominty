@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -66,6 +66,40 @@ class ScoresStore:
         if row is None:
             raise ScoresNotFoundError(f"no active scoring criteria for job {job_id!r}")
         return {"job_id": row.job_id, "version": row.version, "criteria": row.criteria}
+
+    async def save_criteria(
+        self, *, job_id: str, criteria: list, created_by: str | None = None
+    ) -> dict[str, Any]:
+        """Save a new active rubric version for a job; deactivates the old one."""
+        try:
+            async with self._sessions() as session:
+                current_max = (
+                    await session.execute(
+                        select(func.max(ScoringCriteria.version)).where(
+                            ScoringCriteria.job_id == job_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                await session.execute(
+                    update(ScoringCriteria)
+                    .where(
+                        ScoringCriteria.job_id == job_id,
+                        ScoringCriteria.active.is_(True),
+                    )
+                    .values(active=False)
+                )
+                row = ScoringCriteria(
+                    job_id=job_id,
+                    version=(current_max or 0) + 1,
+                    criteria=criteria,
+                    active=True,
+                    created_by=created_by,
+                )
+                session.add(row)
+                await session.commit()
+                return {"job_id": row.job_id, "version": row.version, "criteria": row.criteria}
+        except SQLAlchemyError as exc:
+            raise ScoresError("score store request failed") from exc
 
     async def save_score(
         self,

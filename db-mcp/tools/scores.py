@@ -1,9 +1,12 @@
 """Score tools: reads for the Recruiter Agent, writes for the Assessment Agent.
 
-No confirmation quoting here (unlike the ATS tools): the assessment agent is
-headless — webhook-triggered, with no Hiring Manager instruction to quote.
-Least privilege comes from connection profiles instead: the assessment agent
-gets the `write` profile, the recruiter gets `read`, and only dev runs `all`.
+The assessment agent is headless (triggered, no Hiring Manager to quote), so
+its writes need no confirmation. Criteria authoring is the opposite: the
+recruiter saves rubrics on the HM's behalf, so save_scoring_criteria requires
+HM-quoting confirmation like the ATS decision tools. Least privilege comes
+from connection profiles: the assessment agent gets `write` (score writes,
+no criteria writes), the recruiter gets `read` plus criteria authoring, and
+only dev runs `all`.
 """
 
 from __future__ import annotations
@@ -38,11 +41,56 @@ def _require_breakdown(breakdown: Any) -> None:
             raise ToolError(f"breakdown entry {entry.get('label')!r} needs a numeric score.")
 
 
+def _require_confirmation(confirmation: str | None, tool: str) -> None:
+    if not confirmation or not confirmation.strip():
+        raise ToolError(f"{tool} needs confirmation quoting the Hiring Manager's instruction.")
+
+
+def _require_criteria(criteria: Any) -> None:
+    if not isinstance(criteria, list) or not criteria:
+        raise ToolError("criteria must be a non-empty list of {label, max_score} entries.")
+    seen: set = set()
+    total = 0.0
+    for entry in criteria:
+        if not isinstance(entry, dict) or not entry.get("label") or not str(entry["label"]).strip():
+            raise ToolError("criteria entries need a non-blank label.")
+        label = str(entry["label"]).strip()
+        if label in seen:
+            raise ToolError(f"criteria labels must be unique, got {label!r} twice.")
+        seen.add(label)
+        ceiling = entry.get("max_score")
+        if isinstance(ceiling, bool) or not isinstance(ceiling, (int, float)) or ceiling <= 0:
+            raise ToolError(f"criteria entry {label!r} needs a max_score number above 0.")
+        total += ceiling
+    if abs(total - 100) > 0.01:
+        raise ToolError(f"criteria max_scores must sum to 100 (absolute 0-100 scale), got {total}.")
+
+
 async def get_scoring_criteria(job_id: str) -> dict[str, Any]:
     """Read a job's active scoring rubric (see tool description)."""
     store = get_scores_store()
     try:
         return await store.get_criteria(job_id)
+    except ScoresError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await store.aclose()
+
+
+async def save_scoring_criteria(
+    job_id: str,
+    criteria: list,
+    confirmation: str,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    """Save the Hiring Manager's scoring rubric for a job (see tool description)."""
+    _require_confirmation(confirmation, "save_scoring_criteria")
+    _require_non_blank(job_id, "job_id")
+    _require_non_blank(created_by, "created_by")
+    _require_criteria(criteria)
+    store = get_scores_store()
+    try:
+        return await store.save_criteria(job_id=job_id, criteria=criteria, created_by=created_by)
     except ScoresError as exc:
         raise ToolError(str(exc)) from exc
     finally:
@@ -125,10 +173,25 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
             "get_scoring_criteria",
             "Read the active scoring rubric for a Harly job (version plus the "
             "criteria list of {label, max_score} entries the Hiring Manager "
-            "designed). Assessment: call this before scoring any application so "
-            "the breakdown matches the current rubric version. Fails when the "
-            "job has no active criteria yet.",
+            "designed; max_scores always sum to 100). Assessment: call this "
+            "before scoring any application so the breakdown matches the "
+            "current rubric version. Fails when the job has no active criteria "
+            "yet — tell the Hiring Manager to design the rubric first.",
             get_scoring_criteria,
+        ),
+        (
+            "save_scoring_criteria",
+            "Save the Hiring Manager's scoring rubric for a Harly job, "
+            "creating a new version (old versions deactivate; previously "
+            "saved scores keep their old criteria_version). Required: job_id "
+            "(resolve a job title first with list_jobs/get_job on the ATS "
+            "connection), criteria (non-empty list of {label, max_score} with "
+            "unique labels and max_scores summing to 100 for the absolute "
+            "0-100 scale), confirmation quoting the Hiring Manager's rubric "
+            "instruction. Optional: created_by. Ask the Hiring Manager for "
+            "dimensions and weights when missing — never invent the rubric. "
+            "Recruiter-agent only (read profile).",
+            save_scoring_criteria,
         ),
         (
             "save_application_score",
@@ -149,11 +212,15 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
         ),
         (
             "list_top_applications",
-            "List a job's highest-scoring applications, ordered by total "
-            "descending. Takes job_id (resolve a job title to its ID first with "
-            "list_jobs on the ATS connection) and limit 1-100 (default 10). "
-            "Returns each application's id, candidate, total, breakdown, and "
-            "criteria version. Unscored applications never appear here.",
+            "Answer 'top N candidates for this job'. Takes job_id (resolve a "
+            "job title to its ID first with list_jobs on the ATS connection) "
+            "and limit 1-100 (default 10). Returns the highest-scoring "
+            "applications ordered by total descending, each with application "
+            "and candidate IDs, total, breakdown, rationale, and criteria "
+            "version. Unscored applications never appear here — say so when "
+            "the list is short. Enrich names via get_application/get_candidate "
+            "on the ATS connection, present rank plus total plus one line of "
+            "rationale each, and offer move/reject next steps.",
             list_top_applications,
         ),
         (
@@ -175,8 +242,11 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
             "get_application_resume",
         }
     elif profile == "read":
+        # Recruiter: reads plus rubric authoring (HM-quoted confirmation).
+        # Score writes stay assessment-only, criteria writes stay recruiter-only.
         wanted = {
             "get_scoring_criteria",
+            "save_scoring_criteria",
             "get_application_score",
             "list_top_applications",
             "get_application_resume",
