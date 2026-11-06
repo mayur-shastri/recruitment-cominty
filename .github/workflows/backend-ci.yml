@@ -1,12 +1,12 @@
-# Backend CI: runs iff backend/** (or this file) changes.
+# Backend CI: runs iff backend/**, db/** (or this file) changes.
 name: backend-ci
 
 on:
   push:
     branches: [main]
-    paths: ["backend/**", ".github/workflows/backend-ci.yml"]
+    paths: ["backend/**", "db/**", ".github/workflows/backend-ci.yml"]
   pull_request:
-    paths: ["backend/**", ".github/workflows/backend-ci.yml"]
+    paths: ["backend/**", "db/**", ".github/workflows/backend-ci.yml"]
 
 jobs:
   test:
@@ -17,6 +17,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install backend
-        run: pip install -e './backend[dev]'
+        run: pip install -e ./db -e './backend[dev]'
       - name: Run tests
         run: pytest backend/tests -q

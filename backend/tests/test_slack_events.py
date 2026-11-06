@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.api.slack import Runtime
-from app.database import Base
 from app.main import create_app
-from app.models import Employee
+from recruitment_db.database import Base
+from recruitment_db.models import Employee
 
 
 class FakeCominty:

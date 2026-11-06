@@ -12,9 +12,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import app.models  # noqa: F401 - register models on Base.metadata
-from app.config import get_settings, to_async_database_url
-from app.database import Base
+import recruitment_db.models  # noqa: F401 - register models on Base.metadata
+from app.config import get_settings
+from recruitment_db.database import Base
+from recruitment_db.urls import to_async_database_url
 
 config = context.config
 # NOTE: the URL intentionally never passes through alembic's ConfigParser
