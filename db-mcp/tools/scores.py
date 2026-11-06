@@ -1,16 +1,18 @@
 """Score tools: reads for the Recruiter Agent, writes for the Assessment Agent.
 
 The assessment agent is headless (triggered, no Hiring Manager to quote), so
-its writes need no confirmation. Criteria authoring is the opposite: the
-recruiter saves rubrics on the HM's behalf, so save_scoring_criteria requires
-HM-quoting confirmation like the ATS decision tools. Least privilege comes
-from connection profiles: the assessment agent gets `write` (score writes,
-no criteria writes), the recruiter gets `read` plus criteria authoring, and
-only dev runs `all`.
+its writes need no confirmation. HM-plan authoring is the opposite: the
+recruiter saves rubrics and interview plans on the HM's behalf, so
+save_scoring_criteria and save_interview_config require HM-quoting
+confirmation like the ATS decision tools. Least privilege comes from
+connection profiles: the assessment agent gets `write` (score writes, no
+plan writes), the recruiter gets `read` plus plan authoring, and only dev
+runs `all`.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
@@ -142,6 +144,75 @@ async def get_application_score(application_id: str) -> dict[str, Any]:
         await store.aclose()
 
 
+def _require_rounds(rounds: Any) -> None:
+    if not isinstance(rounds, list) or not rounds:
+        raise ToolError("rounds must be a non-empty ordered list of interview rounds.")
+    seen: set = set()
+    for entry in rounds:
+        if not isinstance(entry, dict):
+            raise ToolError("each round must be {name, window, pool}.")
+        name = entry.get("name")
+        if not name or not str(name).strip():
+            raise ToolError("each round needs a non-blank name.")
+        label = str(name).strip()
+        if label in seen:
+            raise ToolError(f"round names must be unique, got {label!r} twice.")
+        seen.add(label)
+        window = entry.get("window")
+        if not isinstance(window, dict):
+            raise ToolError(f"round {label!r} needs a window of {{start, end}} ISO dates.")
+        try:
+            start = date.fromisoformat(str(window.get("start")))
+            end = date.fromisoformat(str(window.get("end")))
+        except (TypeError, ValueError):
+            raise ToolError(f"round {label!r} window must be ISO dates (YYYY-MM-DD).") from None
+        if start > end:
+            raise ToolError(f"round {label!r} window start must not be after end.")
+        pool = entry.get("pool")
+        if not isinstance(pool, list) or not pool:
+            raise ToolError(f"round {label!r} needs a non-empty interviewer pool.")
+        for person in pool:
+            if not isinstance(person, dict):
+                raise ToolError(f"round {label!r} pool entries must be {{name, email}}.")
+            if not person.get("name") or not str(person["name"]).strip():
+                raise ToolError(f"round {label!r} pool entries need a non-blank name.")
+            email = person.get("email")
+            parts = str(email).split("@") if isinstance(email, str) else []
+            if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+                raise ToolError(f"round {label!r} pool entry {person.get('name')!r} needs a valid email.")
+
+
+async def save_interview_config(
+    job_id: str,
+    rounds: list,
+    confirmation: str,
+    updated_by: str | None = None,
+) -> dict[str, Any]:
+    """Save the Hiring Manager's interview plan for a job (see tool description)."""
+    _require_confirmation(confirmation, "save_interview_config")
+    _require_non_blank(job_id, "job_id")
+    _require_non_blank(updated_by, "updated_by")
+    _require_rounds(rounds)
+    store = get_scores_store()
+    try:
+        return await store.save_interview_config(job_id=job_id, rounds=rounds, updated_by=updated_by)
+    except ScoresError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await store.aclose()
+
+
+async def get_interview_config(job_id: str) -> dict[str, Any]:
+    """Read a job's saved interview plan (see tool description)."""
+    store = get_scores_store()
+    try:
+        return await store.get_interview_config(job_id)
+    except ScoresError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await store.aclose()
+
+
 async def get_application_resume(application_id: str) -> dict[str, Any]:
     """Read the resume URL for one application (see tool description)."""
     store = get_scores_store()
@@ -231,6 +302,28 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
             "the candidate profile and note the gap in the rationale.",
             get_application_resume,
         ),
+        (
+            "save_interview_config",
+            "Save the Hiring Manager's interview plan for a Harly job "
+            "(overwrites any previous plan). Required: job_id (resolve a job "
+            "title first with list_jobs/get_job on the ATS connection), rounds "
+            "(ordered non-empty list of {name, window: {start, end} ISO dates "
+            "with start on/before end, pool: non-empty list of {name, email}}), "
+            "confirmation quoting the Hiring Manager's interview-plan "
+            "instruction. Optional: updated_by. Ask the Hiring Manager for "
+            "rounds, windows, and pools when missing — never invent "
+            "interviewers or dates. Recruiter-agent only (read profile).",
+            save_interview_config,
+        ),
+        (
+            "get_interview_config",
+            "Read a job's saved interview plan (rounds with date windows and "
+            "interviewer pools). Use before moving an application into an "
+            "interview-kind stage: when this fails (no plan saved yet), ask "
+            "the Hiring Manager for the rounds, windows, and pools and save "
+            "them first.",
+            get_interview_config,
+        ),
     ]
     if profile == "all":
         wanted = None
@@ -242,14 +335,17 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
             "get_application_resume",
         }
     elif profile == "read":
-        # Recruiter: reads plus rubric authoring (HM-quoted confirmation).
-        # Score writes stay assessment-only, criteria writes stay recruiter-only.
+        # Recruiter: reads plus HM-plan authoring (HM-quoted confirmation).
+        # Score writes stay assessment-only; criteria and interview plans
+        # stay recruiter-only.
         wanted = {
             "get_scoring_criteria",
             "save_scoring_criteria",
             "get_application_score",
             "list_top_applications",
             "get_application_resume",
+            "save_interview_config",
+            "get_interview_config",
         }
     else:
         raise ValueError(f"unknown db-mcp profile {profile!r}: expected all, read, or write")

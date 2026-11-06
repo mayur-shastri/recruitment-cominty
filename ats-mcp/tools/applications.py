@@ -154,7 +154,11 @@ def register_tools(mcp: Any) -> None:
         description=(
             "Move a Harly application to another pipeline stage of its job. "
             "Resolve to_stage_id first with list_job_stages (match the stage "
-            "name the Hiring Manager asked for). Requires confirmation: quote "
+            "name the Hiring Manager asked for). Gate: when the target stage's "
+            "kind is interview, first read the job's interview plan with "
+            "get_interview_config on the DB connection — if none is saved, ask "
+            "the Hiring Manager for the rounds, date windows, and interviewer "
+            "pools and save them before moving. Requires confirmation: quote "
             "the Hiring Manager's move instruction. Returns the moved application."
         ),
     )(move_application)

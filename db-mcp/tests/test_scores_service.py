@@ -148,6 +148,32 @@ async def test_list_top_empty_job(store: ScoresStore) -> None:
     assert await store.list_top("j9", 10) == {"job_id": "j9", "scores": []}
 
 
+async def test_save_and_get_interview_config_round_trip(store: ScoresStore) -> None:
+    rounds = [
+        {
+            "name": "Tech screen",
+            "window": {"start": "2026-11-20", "end": "2026-11-27"},
+            "pool": [{"name": "Asha", "email": "asha@acme.com"}],
+        }
+    ]
+    saved = await store.save_interview_config(job_id="j1", rounds=rounds, updated_by="U1")
+    assert saved == {"job_id": "j1", "rounds": rounds}
+    assert await store.get_interview_config("j1") == {"job_id": "j1", "rounds": rounds}
+
+
+async def test_save_interview_config_overwrites(store: ScoresStore) -> None:
+    old = [{"name": "Screen", "window": {"start": "2026-11-01", "end": "2026-11-02"}, "pool": []}]
+    new = [{"name": "Screen", "window": {"start": "2026-12-01", "end": "2026-12-02"}, "pool": []}]
+    await store.save_interview_config(job_id="j1", rounds=old)
+    await store.save_interview_config(job_id="j1", rounds=new)
+    assert (await store.get_interview_config("j1"))["rounds"] == new
+
+
+async def test_get_interview_config_missing_raises(store: ScoresStore) -> None:
+    with pytest.raises(ScoresNotFoundError, match="j9"):
+        await store.get_interview_config("j9")
+
+
 async def test_get_resume_round_trip(store: ScoresStore) -> None:
     from recruitment_db.models import ApplicationResume
 

@@ -348,7 +348,10 @@ def register_tools(mcp: Any) -> None:
             "Manager approves the draft description. Workflow: right after creating, "
             "call list_job_stages, show the starting pipeline to the Hiring Manager, "
             "ask whether they want to add, rename, remove, or reorder stages, apply "
-            "any changes with the stage tools, and only then publish. Returns the "
+            "any changes with the stage tools, and only then publish. Also ask for "
+            "the interview plan (rounds, date windows, interviewer pools) and save "
+            "it with save_interview_config on the DB connection — if the Hiring "
+            "Manager defers, ask again at the first move-forward. Returns the "
             "created job with id, slug, and status."
         ),
     )(create_job)
