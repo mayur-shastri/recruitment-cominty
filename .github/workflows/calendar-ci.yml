@@ -1,0 +1,22 @@
+# Calendar mock CI: runs iff calendar-mock/**, db/** (or this file) changes.
+name: calendar-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["calendar-mock/**", "db/**", ".github/workflows/calendar-ci.yml"]
+  pull_request:
+    paths: ["calendar-mock/**", "db/**", ".github/workflows/calendar-ci.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install calendar deps
+        run: pip install -e ./db -r calendar-mock/requirements.txt pytest pytest-asyncio aiosqlite httpx
+      - name: Run tests
+        run: pytest calendar-mock/tests -q

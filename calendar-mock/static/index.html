@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AcmeTech Mock Calendar</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; }
+  #login button, #weeknav button { margin: 0.25rem; padding: 0.4rem 0.8rem; cursor: pointer; }
+  .day { border-top: 1px solid #ccc; padding: 0.5rem 0; }
+  .day h3 { margin: 0.2rem 0; font-size: 1rem; }
+  .evt { margin: 0.2rem 0; padding: 0.3rem 0.5rem; border-radius: 4px; font-size: 0.9rem; }
+  .busy { background: #eee; color: #555; }
+  .interview { background: #d6e9ff; color: #0b3d91; }
+  #addbusy { margin-top: 1rem; border-top: 1px solid #ccc; padding-top: 1rem; }
+  #addbusy input { margin: 0.2rem; }
+  .hint { color: #666; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>AcmeTech Mock Calendar (demo)</h1>
+<div id="login"><span class="hint">Log in as interviewer:</span> <span id="who"></span></div>
+<div id="weeknav" hidden>
+  <button id="prev">← prev week</button>
+  <strong id="weeklabel"></strong>
+  <button id="next">next week →</button>
+</div>
+<div id="week"></div>
+<div id="addbusy" hidden>
+  <h3>Add a busy block</h3>
+  <label>date <input id="bdate" type="date"></label>
+  <label>start <input id="bstart" type="time" value="09:00"></label>
+  <label>end <input id="bend" type="time" value="10:00"></label>
+  <label>title <input id="btitle" type="text" value="Focus time"></label>
+  <button id="badd">Add</button>
+  <p class="hint">All times UTC. Busy blocks change what the scheduler agent can book.</p>
+</div>
+<script>
+let me = null;
+let weekStart = monday(new Date());
+
+function monday(d) {
+  const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dow = (x.getUTCDay() + 6) % 7;
+  x.setUTCDate(x.getUTCDate() - dow);
+  return x;
+}
+function iso(d) { return d.toISOString(); }
+function fmt(isoStr) {
+  const d = new Date(isoStr);
+  return d.toISOString().slice(11, 16);
+}
+
+async function refreshMe() {
+  const r = await fetch("/api/me");
+  me = r.ok ? await r.json() : null;
+  document.getElementById("who").textContent = me ? me.name + " <" + me.email + ">" : "(not logged in)";
+  document.getElementById("weeknav").hidden = !me;
+  document.getElementById("addbusy").hidden = !me;
+}
+
+async function loadInterviewers() {
+  const r = await fetch("/api/interviewers");
+  const data = await r.json();
+  const box = document.getElementById("login");
+  data.interviewers.forEach((p) => {
+    const b = document.createElement("button");
+    b.textContent = p.name;
+    b.onclick = async () => {
+      await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({email: p.email})});
+      await refreshMe();
+      await loadWeek();
+    };
+    box.appendChild(b);
+  });
+}
+
+async function loadWeek() {
+  if (!me) return;
+  const start = new Date(weekStart);
+  const end = new Date(weekStart); end.setUTCDate(end.getUTCDate() + 7);
+  document.getElementById("weeklabel").textContent =
+    start.toISOString().slice(0, 10) + " .. " + new Date(end - 1).toISOString().slice(0, 10) + " (UTC)";
+  const q = new URLSearchParams({interviewer_email: me.email, start: iso(start), end: iso(end)});
+  const r = await fetch("/api/availability?" + q);
+  const data = await r.json();
+  const byDay = {};
+  (data.events || []).forEach((e) => {
+    const day = e.starts_at.slice(0, 10);
+    (byDay[day] = byDay[day] || []).push(e);
+  });
+  const week = document.getElementById("week");
+  week.innerHTML = "";
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start); d.setUTCDate(d.getUTCDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    const div = document.createElement("div");
+    div.className = "day";
+    const evts = (byDay[key] || []).map((e) =>
+      `<div class="evt ${e.kind}">${fmt(e.starts_at)}–${fmt(e.ends_at)} · ${e.kind} · ${e.title || ""}</div>`
+    ).join("") || `<div class="hint">free</div>`;
+    div.innerHTML = `<h3>${key}</h3>${evts}`;
+    week.appendChild(div);
+  }
+}
+
+document.getElementById("prev").onclick = async () => { weekStart.setUTCDate(weekStart.getUTCDate() - 7); await loadWeek(); };
+document.getElementById("next").onclick = async () => { weekStart.setUTCDate(weekStart.getUTCDate() + 7); await loadWeek(); };
+document.getElementById("badd").onclick = async () => {
+  const d = document.getElementById("bdate").value;
+  if (!d) { alert("pick a date"); return; }
+  const body = {
+    starts_at: `${d}T${document.getElementById("bstart").value}:00+00:00`,
+    ends_at: `${d}T${document.getElementById("bend").value}:00+00:00`,
+    title: document.getElementById("btitle").value,
+  };
+  const r = await fetch("/api/busy", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (!r.ok) { alert("could not add: " + (await r.json()).detail); return; }
+  await loadWeek();
+};
+
+(async () => { await loadInterviewers(); await refreshMe(); await loadWeek(); })();
+</script>
+</body>
+</html>

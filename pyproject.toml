@@ -8,6 +8,6 @@
 # async test/fixture fails — per-project configs only apply when pytest's
 # rootdir resolves inside that project.)
 [tool.pytest.ini_options]
-testpaths = ["backend/tests", "ats-mcp/tests", "db-mcp/tests"]
+testpaths = ["backend/tests", "ats-mcp/tests", "db-mcp/tests", "calendar-mock/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
