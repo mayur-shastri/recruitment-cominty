@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from recruitment_db.models import ConversationThread, Employee
+from recruitment_db.models import ConversationThread, Employee, SchedulerThread
 
 MIN_HM_GRADE = 7  # hiring managers are employees with grade *above* this
 
@@ -40,3 +40,41 @@ async def record_thread(
         assert existing is not None  # the conflicting row must exist
         return existing
     return thread
+
+
+async def record_scheduler_thread(
+    session: AsyncSession,
+    *,
+    slack_user_id: str,
+    application_id: str,
+    stage_id: str,
+    cominty_thread_id: str,
+) -> SchedulerThread:
+    """Open a coordination row so the interviewer's replies route to the thread."""
+    row = SchedulerThread(
+        slack_user_id=slack_user_id,
+        application_id=application_id,
+        stage_id=stage_id,
+        cominty_thread_id=cominty_thread_id,
+        status="open",
+    )
+    session.add(row)
+    await session.commit()
+    return row
+
+
+async def get_open_scheduler_thread(
+    session: AsyncSession, slack_user_id: str
+) -> SchedulerThread | None:
+    """Latest open coordination for a Slack user (None when the user has none)."""
+    return (
+        await session.execute(
+            select(SchedulerThread)
+            .where(
+                SchedulerThread.slack_user_id == slack_user_id,
+                SchedulerThread.status == "open",
+            )
+            .order_by(SchedulerThread.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()

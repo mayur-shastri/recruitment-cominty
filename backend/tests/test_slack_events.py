@@ -61,6 +61,7 @@ async def runtime(tmp_path):
         engine=engine,
         session_factory=factory,
         cominty=FakeCominty(),
+        scheduler=FakeCominty(),
         cominty_user_id="user_test",
         slack=FakeSlack(),
         signing_secret="test-secret",
@@ -123,7 +124,51 @@ def test_follow_up_uses_thread(client: TestClient, runtime) -> None:
 def test_non_hm_ignored(client: TestClient, runtime) -> None:
     _post(client, _dm_event("ev9", user="U_JUNIOR"))
     assert runtime.cominty.calls == []
+    assert runtime.scheduler.calls == []
     assert runtime.slack.posts == []
+
+
+async def test_interviewer_reply_routes_to_coordination(client: TestClient, runtime) -> None:
+    from app.services.conversation import record_scheduler_thread
+
+    async with runtime.session_factory() as session:
+        await record_scheduler_thread(
+            session,
+            slack_user_id="U_IV",
+            application_id="a1",
+            stage_id="s9",
+            cominty_thread_id="thr_coord",
+        )
+    _post(client, _dm_event("ev10", user="U_IV", text="Tue works for me"))
+    assert runtime.cominty.calls == []
+    assert runtime.scheduler.calls == [("send", "thr_coord", "Tue works for me")]
+    assert runtime.slack.posts == [{"channel": "D1", "text": "continued!"}]
+
+
+async def test_interviewer_reply_failure_posts_error(client: TestClient, runtime) -> None:
+    from app.services.cominty import ComintyServiceError
+    from app.services.conversation import record_scheduler_thread
+
+    async with runtime.session_factory() as session:
+        await record_scheduler_thread(
+            session,
+            slack_user_id="U_IV",
+            application_id="a1",
+            stage_id="s9",
+            cominty_thread_id="thr_coord",
+        )
+
+    async def boom(thread_id: str, message: str):
+        raise ComintyServiceError("cominty down", transient=True)
+
+    runtime.scheduler.send_message = boom
+    _post(client, _dm_event("ev11", user="U_IV", text="hi"))
+    assert runtime.slack.posts == [
+        {
+            "channel": "D1",
+            "text": "Sorry — I couldn't reach the scheduling agent just now. Please try again in a bit.",
+        }
+    ]
 
 
 def test_bot_message_ignored(client: TestClient, runtime) -> None:

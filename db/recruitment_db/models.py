@@ -137,6 +137,20 @@ class Interviewer(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class SchedulerThread(Base):
+    """Open coordinations: interviewer Slack user -> scheduler Cominty thread."""
+
+    __tablename__ = "scheduler_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slack_user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    application_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    stage_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    cominty_thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class CalendarEvent(Base):
     """Busy blocks (personal) and interview bookings (agent) per interviewer.
 

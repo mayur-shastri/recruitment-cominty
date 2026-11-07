@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, suppress
 from cominty_sdk import AgentCapabilities, AsyncCominty, McpCapability, WebCapability
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from slack_sdk.web.async_client import AsyncWebClient
 from sqlalchemy import text
 
@@ -19,6 +20,7 @@ from app.api.harly import HarlyRuntime, router as harly_router
 from app.api.slack import Runtime, router as slack_router
 from app.config import get_settings
 from app.logging_setup import setup_logging
+from app.mcp.server import create_comms_mcp
 from app.services.assessment_pipeline import run_poll_loop
 from app.services.cominty import ATS_CONNECTION_ID, ComintyService
 from recruitment_db.database import create_engine_and_sessions
@@ -42,6 +44,21 @@ async def lifespan(app: FastAPI):
             settings.harly_s3_secret_access_key,
         ],
     )
+    assessment_connections = [
+        c for c in [ATS_CONNECTION_ID, settings.cominty_db_mcp_connection_id] if c
+    ]
+    # Scheduler toolset: ATS (interviews) + DB (plans) + calendar
+    # (availability/booking) + comms (Slack DMs). Empty connection IDs drop
+    # out until Cominty registration lands.
+    scheduler_connections = [
+        c
+        for c in [
+            *assessment_connections,
+            settings.cominty_calendar_connection_id,
+            settings.cominty_comms_connection_id,
+        ]
+        if c
+    ]
     if not hasattr(app.state, "runtime"):
         # Fail fast here (bad credentials/ids) rather than on the first DM.
         engine, session_factory = create_engine_and_sessions(to_async_database_url(settings.database_url))
@@ -50,10 +67,24 @@ async def lifespan(app: FastAPI):
             user_id=settings.cominty_user_id,
             timeout=settings.cominty_timeout_s,
         )
+        # One Slack client shared by the DM runtime and the Harly runtime
+        # (pool-email resolution for scheduler coordinations).
+        slack_client: Any = AsyncWebClient(token=settings.slack_bot_token)
         # Capabilities freeze for a thread's lifetime at start; existing threads
         # are unaffected. Register the `harly_ats` integration in Cominty before a
         # NEW thread starts, or the start call fails validation server-side.
         recruiter_capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=[ATS_CONNECTION_ID]))
+        scheduler_service = ComintyService(
+            AsyncCominty(
+                api_token=settings.cominty_api_key,
+                user_id=settings.cominty_user_id,
+                timeout=settings.cominty_timeout_s,
+            ),
+            agent_id=settings.cominty_scheduler_agent_id,
+            thread_capabilities=AgentCapabilities(
+                mcp=McpCapability(activation="always", connections=scheduler_connections),
+            ),
+        )
         app.state.runtime = Runtime(
             engine=engine,
             session_factory=session_factory,
@@ -62,30 +93,15 @@ async def lifespan(app: FastAPI):
                 agent_id=settings.cominty_recruiter_agent_id,
                 thread_capabilities=recruiter_capabilities,
             ),
+            scheduler=scheduler_service,
             cominty_user_id=settings.cominty_user_id,
-            slack=AsyncWebClient(token=settings.slack_bot_token),
+            slack=slack_client,
             signing_secret=settings.slack_signing_secret,
         )
         logger.info("bridge ready (env=%s)", settings.app_env)
     if not hasattr(app.state, "harly_runtime"):
-        assessment_connections = [
-            c for c in [ATS_CONNECTION_ID, settings.cominty_db_mcp_connection_id] if c
-        ]
         # Web stays on: the agent fetches resume URLs itself (no in-house OCR).
         assessment_client = AsyncCominty(
-            api_token=settings.cominty_api_key,
-            user_id=settings.cominty_user_id,
-            timeout=settings.cominty_timeout_s,
-        )
-        # Scheduler toolset: ATS (interviews) + DB (plans) + calendar
-        # (availability/booking). Empty connection IDs drop out until Cominty
-        # registration lands.
-        scheduler_connections = [
-            c
-            for c in [*assessment_connections, settings.cominty_calendar_connection_id]
-            if c
-        ]
-        scheduler_client = AsyncCominty(
             api_token=settings.cominty_api_key,
             user_id=settings.cominty_user_id,
             timeout=settings.cominty_timeout_s,
@@ -107,14 +123,9 @@ async def lifespan(app: FastAPI):
                 ),
             ),
             assessment_agent_id=settings.cominty_assessment_agent_id,
-            scheduler=ComintyService(
-                scheduler_client,
-                agent_id=settings.cominty_scheduler_agent_id,
-                thread_capabilities=AgentCapabilities(
-                    mcp=McpCapability(activation="always", connections=scheduler_connections),
-                ),
-            ),
+            scheduler=app.state.runtime.scheduler,
             scheduler_agent_id=settings.cominty_scheduler_agent_id,
+            slack=app.state.runtime.slack,
             s3_endpoint=settings.harly_s3_endpoint,
             s3_bucket=settings.harly_s3_bucket,
             s3_region=settings.harly_s3_region,
@@ -146,8 +157,31 @@ async def lifespan(app: FastAPI):
         await harly_runtime.scheduler.aclose()
 
 
+def _mcp_host() -> str:
+    """Bind host for the mounted MCP app (falls back for settings-less envs).
+
+    Import/collection time has no .env in CI, so settings may not validate
+    there — loopback keeps DNS-rebinding protection on. Production sets
+    BACKEND_HOST=0.0.0.0 via compose, matching the standalone MCP servers.
+    """
+    try:
+        return get_settings().backend_host
+    except ValidationError:
+        return "127.0.0.1"
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="AcmeTech Recruitment", lifespan=lifespan)
+    comms_app = create_comms_mcp().streamable_http_app(stateless_http=True, host=_mcp_host())
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI):
+        async with lifespan(app):
+            # Mounted apps don't run their own lifespan; without this the MCP
+            # session manager's task group never initializes and /mcp 500s.
+            async with comms_app.router.lifespan_context(comms_app):
+                yield
+
+    app = FastAPI(title="AcmeTech Recruitment", lifespan=app_lifespan)
     app.include_router(slack_router)
     app.include_router(harly_router)
 
@@ -164,6 +198,8 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=503, content={"status": "degraded", "db": "unreachable"})
         return {"status": "ok"}
 
+    # Mounted last: the "/" prefix would otherwise swallow later routes.
+    app.mount("/", comms_app)
     return app
 
 

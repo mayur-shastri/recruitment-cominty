@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     log_level: str = "INFO"
+    # Bind host, mirrored into the mounted MCP app's DNS-rebinding default:
+    # loopback keeps protection on, 0.0.0.0 (containers) disables it — the
+    # same behavior as the standalone .run() MCP servers.
+    backend_host: str = "127.0.0.1"
 
     database_url: str
 
@@ -37,6 +41,8 @@ class Settings(BaseSettings):
     cominty_scheduler_agent_id: str = ""
     # Mock calendar MCP connection for the scheduler's availability tools.
     cominty_calendar_connection_id: str = ""
+    # Comms MCP connection (this bridge's own /mcp): scheduler's Slack tools.
+    cominty_comms_connection_id: str = ""
     # Polling fallback: sweep unscored applications every interval (Harly
     # webhooks are broken upstream). Disable to rely on webhooks alone.
     assessment_poll_enabled: bool = True

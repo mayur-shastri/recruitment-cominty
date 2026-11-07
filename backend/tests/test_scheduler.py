@@ -55,6 +55,14 @@ def test_message_carries_contract() -> None:
     assert "get_availability" in message
     assert "book_interview" in message
     assert "event key" in message
+    assert "send_slack_message" in message
+    assert "replies arrive back in this thread" in message
+
+
+def test_message_notes_unreachable_members() -> None:
+    message = _message(interview_plan=[{"name": "R1"}], unreachable=["ghost@acme.com"])
+    assert "out of band" in message
+    assert "ghost@acme.com" in message
 
 
 def test_message_notes_gaps() -> None:
@@ -66,7 +74,7 @@ def test_message_notes_gaps() -> None:
 
 async def test_trigger_starts_named_thread() -> None:
     cominty = FakeCominty()
-    reply = await trigger_scheduler(
+    thread_id, reply = await trigger_scheduler(
         cominty,
         agent_id="sched_1",
         event_id="e9",
@@ -78,6 +86,7 @@ async def test_trigger_starts_named_thread() -> None:
         stage_name="R1 Interview",
         interview_plan=[{"name": "R1"}],
     )
+    assert thread_id == "thr_9"
     assert reply == "ACK schedule"
     [(message, name)] = cominty.calls
     assert name == "schedule-a1-s9"

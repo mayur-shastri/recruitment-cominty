@@ -64,6 +64,7 @@ def client(factory):
         engine=_StubEngine(),
         session_factory=factory,
         cominty=FakeCominty(),
+        scheduler=FakeCominty(),
         cominty_user_id="user_test",
         slack=object(),
         signing_secret="x",
@@ -77,6 +78,7 @@ def client(factory):
         assessment_agent_id="agent_test",
         scheduler=FakeCominty(),
         scheduler_agent_id="sched_test",
+        slack=object(),
     )
     return TestClient(app)
 
