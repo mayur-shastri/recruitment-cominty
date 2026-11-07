@@ -169,6 +169,28 @@ class SchedulerTrigger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class CandidateThread(Base):
+    """Candidate email coordinations: reply-to token -> scheduler thread."""
+
+    __tablename__ = "candidate_threads"
+
+    token: Mapped[str] = mapped_column(String(32), primary_key=True)
+    application_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    stage_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    cominty_thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ResendEvent(Base):
+    """Processed Resend webhook event IDs (at-least-once dedupe)."""
+
+    __tablename__ = "resend_events"
+
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class CalendarEvent(Base):
     """Busy blocks (personal) and interview bookings (agent) per interviewer.
 

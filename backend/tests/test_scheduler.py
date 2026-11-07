@@ -56,6 +56,7 @@ def test_message_carries_contract() -> None:
     assert "book_interview" in message
     assert "event key" in message
     assert "send_slack_message" in message
+    assert "send_email" in message
     assert "replies arrive back in this thread" in message
 
 

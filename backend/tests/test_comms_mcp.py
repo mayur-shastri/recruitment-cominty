@@ -58,9 +58,56 @@ async def test_comms_error_becomes_tool_error(monkeypatch) -> None:
         await comms_tools.send_slack_message("ghost@acme.tech", "hi")
 
 
+async def test_send_email_validates(monkeypatch) -> None:
+    async def boom(*args, **kwargs):
+        raise AssertionError("service must not run")
+
+    monkeypatch.setattr(comms_tools.candidate_comms, "send_candidate_email", boom)
+    with pytest.raises(ToolError, match="must not be blank"):
+        await comms_tools.send_email("  ", "s", "t", "a1", "s9")
+    with pytest.raises(ToolError, match="must not be blank"):
+        await comms_tools.send_email("a@b.c", "  ", "t", "a1", "s9")
+
+
+async def test_send_email_forwards(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    calls: list = []
+
+    async def fake_send(resend, factory, **kwargs):
+        calls.append(kwargs)
+        return {"email_id": "email_1", "reply_to": "sched-tok@in.test.dev"}
+
+    monkeypatch.setattr(comms_tools.candidate_comms, "send_candidate_email", fake_send)
+    monkeypatch.setattr(
+        comms_tools,
+        "get_settings",
+        lambda: SimpleNamespace(
+            resend_api_key="re_test",
+            resend_from_email="Acme <sched@test.dev>",
+            resend_receiving_domain="in.test.dev",
+            database_url="sqlite+aiosqlite:///:memory:",
+        ),
+    )
+    result = await comms_tools.send_email("cand@test.com", "R1 options", "Tue?", "a1", "s9")
+    assert result["email_id"] == "email_1"
+    assert calls[0]["to_email"] == "cand@test.com"
+    assert calls[0]["application_id"] == "a1"
+
+
+async def test_send_email_refuses_unconfigured(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        comms_tools, "get_settings", lambda: SimpleNamespace(resend_api_key="", database_url="")
+    )
+    with pytest.raises(ToolError, match="not configured"):
+        await comms_tools.send_email("a@b.c", "s", "t", "a1", "s9")
+
+
 def test_register_exposes_comms_tools() -> None:
     names = [t.name for t in create_comms_mcp()._tool_manager._tools.values()]
-    assert names == ["health", "send_slack_message"]
+    assert names == ["health", "send_slack_message", "send_email"]
 
 
 def _rpc(client, method: str, params: dict, rpc_id: int = 1) -> dict:
@@ -108,6 +155,10 @@ def test_backend_mount_serves_mcp_and_bridge(monkeypatch) -> None:
         harly_s3_secret_access_key="",
         harly_s3_workspace_id="",
         harly_s3_public_url="",
+        resend_api_key="",
+        resend_from_email="",
+        resend_receiving_domain="",
+        resend_webhook_secret="",
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: fake)
     app = create_app()
@@ -126,4 +177,8 @@ def test_backend_mount_serves_mcp_and_bridge(monkeypatch) -> None:
         )
         assert init["result"]["serverInfo"]["name"] == "acmetech-comms"
         tools = _rpc(client, "tools/list", {}, rpc_id=2)
-        assert [t["name"] for t in tools["result"]["tools"]] == ["health", "send_slack_message"]
+        assert [t["name"] for t in tools["result"]["tools"]] == [
+            "health",
+            "send_slack_message",
+            "send_email",
+        ]
