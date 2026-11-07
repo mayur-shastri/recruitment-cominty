@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from app.mcp.tools import send_slack_message
+from app.mcp.tools import send_email, send_slack_message
 
 
 def health() -> str:
@@ -37,4 +37,17 @@ def create_comms_mcp() -> MCPServer:
             "welcome. Fails loudly on unknown emails."
         ),
     )(send_slack_message)
+    mcp.tool(
+        name="send_email",
+        description=(
+            "Email a candidate about their interview (negotiation welcome). "
+            "Required: to_email (the candidate's address from the trigger), "
+            "subject, text (plain text; propose 2-3 concrete slots with "
+            "dates, times, and timezone), application_id, stage_id. Each "
+            "send gets a unique reply-to, so the candidate's replies route "
+            "back into this thread automatically — invite a reply with what "
+            "works. A coordination for the application+stage must already "
+            "exist (the trigger creates it); fails loudly otherwise."
+        ),
+    )(send_email)
     return mcp

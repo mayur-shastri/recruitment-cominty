@@ -17,6 +17,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from sqlalchemy import text
 
 from app.api.harly import HarlyRuntime, router as harly_router
+from app.api.resend import ResendRuntime, router as resend_router
 from app.api.slack import Runtime, router as slack_router
 from app.config import get_settings
 from app.logging_setup import setup_logging
@@ -141,6 +142,14 @@ async def lifespan(app: FastAPI):
             s3_workspace_id=settings.harly_s3_workspace_id,
             s3_public_url=settings.harly_s3_public_url,
         )
+    if not hasattr(app.state, "resend_runtime"):
+        app.state.resend_runtime = ResendRuntime(
+            session_factory=app.state.runtime.session_factory,
+            webhook_secret=settings.resend_webhook_secret,
+            scheduler=app.state.runtime.scheduler,
+            resend_api_key=settings.resend_api_key,
+            resend_from_email=settings.resend_from_email,
+        )
     if settings.assessment_poll_enabled and not hasattr(app.state, "poll_task"):
         app.state.poll_task = asyncio.create_task(
             run_poll_loop(
@@ -191,6 +200,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AcmeTech Recruitment", lifespan=app_lifespan)
     app.include_router(slack_router)
     app.include_router(harly_router)
+    app.include_router(resend_router)
 
     @app.get("/health")
     async def health(request: Request):

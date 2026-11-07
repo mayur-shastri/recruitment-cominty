@@ -47,3 +47,12 @@ The scheduler agent books interviews and negotiates with interviewers:
   (`scheduler_threads`, migration 0006). HMs always reach the recruiter
   agent instead, even mid-coordination; one active coordination per
   interviewer is assumed (latest open row wins).
+- Candidate email runs over Resend: `send_email` (comms tools) sends
+  with a per-coordination `sched-<token>@` reply-to; inbound replies
+  arrive at `POST /resend/events` (Svix-verified, deduped via
+  `resend_events`, migration 0008), fetch their body, and route into
+  the coordination thread (`candidate_threads`) with the agent's reply
+  emailed back. Needs `RESEND_API_KEY`, `RESEND_FROM_EMAIL`,
+  `RESEND_RECEIVING_DOMAIN` (resend.app subdomain or custom domain),
+  `RESEND_WEBHOOK_SECRET`, and a Resend receiving webhook pointed at
+  the backend `/resend/events` URL.

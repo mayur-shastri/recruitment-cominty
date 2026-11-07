@@ -68,7 +68,8 @@ def build_schedule_message(
         "get_availability on the calendar connection and book with "
         "book_interview inside a free gap, passing this trigger event ID as "
         "the event key. Coordinate with interviewers over Slack via "
-        "send_slack_message; their replies arrive back in this thread."
+        "send_slack_message, and with the candidate over email via "
+        "send_email; their replies arrive back in this thread."
     )
     if unreachable:
         message += (

@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     harly_s3_workspace_id: str = ""
     harly_s3_public_url: str = ""
 
+    # Resend candidate email (scheduler negotiations). Empty means "not
+    # configured": the send tool and inbound receiver refuse cleanly.
+    # receiving_domain is the Resend inbound domain (resend.app subdomain
+    # or custom domain with MX records); coordination replies route on
+    # per-thread sched-<token>@ reply-to addresses under it.
+    resend_api_key: str = ""
+    resend_from_email: str = ""
+    resend_receiving_domain: str = ""
+    resend_webhook_secret: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
