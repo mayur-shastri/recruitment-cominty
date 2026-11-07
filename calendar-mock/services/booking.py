@@ -6,6 +6,7 @@ construction (no shared engines), mirroring the scores store's shape.
 
 from __future__ import annotations
 
+import hmac
 from datetime import datetime, timezone
 from typing import Any
 
@@ -69,6 +70,19 @@ class BookingStore:
             async with self._sessions() as session:
                 rows = (await session.execute(select(Interviewer).order_by(Interviewer.email))).scalars()
                 return {"interviewers": [{"email": r.email, "name": r.name} for r in rows]}
+        except SQLAlchemyError as exc:
+            raise BookingError("calendar store request failed") from exc
+
+    async def verify_interviewer(self, email: str, password: str) -> dict[str, Any]:
+        """Direct password check for demo login (same error either way)."""
+        try:
+            async with self._sessions() as session:
+                row = await session.get(Interviewer, email)
+                if row is None or not hmac.compare_digest(row.password, password):
+                    raise BookingNotFoundError("invalid email or password")
+                return {"email": row.email, "name": row.name}
+        except BookingNotFoundError:
+            raise
         except SQLAlchemyError as exc:
             raise BookingError("calendar store request failed") from exc
 

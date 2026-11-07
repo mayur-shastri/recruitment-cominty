@@ -29,9 +29,17 @@ timezone have defaults; override with `CALENDAR_HOST`, `CALENDAR_PORT`,
 cd calendar-mock && python server.py
 ```
 
-- UI: `http://127.0.0.1:8004/` (pick an interviewer, browse the week, add busy blocks)
+- UI: `http://127.0.0.1:8004/` (sign in as an interviewer, browse the week, block time)
 - MCP: `http://127.0.0.1:8004/mcp` (check with `python scripts/mcp_check.py <url>`)
 - Tests: `pytest calendar-mock/tests -q` (or bare `pytest` from the root)
+
+Seeded accounts (passwords printed by `seed.py` too):
+
+| Name | Email | Password |
+|---|---|---|
+| Asha Patel | asha.patel@acme.tech | asha123 |
+| Ravi Kumar | ravi.kumar@acme.tech | ravi123 |
+| Mei Chen | mei.chen@acme.tech | mei123 |
 
 ## Deploy
 

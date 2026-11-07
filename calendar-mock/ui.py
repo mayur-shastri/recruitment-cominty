@@ -76,17 +76,18 @@ async def api_interviewers() -> Any:
 async def api_login(request: Request, response: Response) -> Any:
     body = await request.json()
     email = (body.get("email") or "").strip()
-    if not email:
-        return _bad("email must not be blank.")
+    password = body.get("password") or ""
+    if not email or not password:
+        return _bad("email and password are required.")
     try:
         async with _store() as store:
-            found = [i for i in (await store.list_interviewers())["interviewers"] if i["email"] == email]
+            found = await store.verify_interviewer(email, password)
+    except BookingNotFoundError as exc:
+        return JSONResponse(status_code=401, content={"detail": str(exc)})
     except BookingError as exc:
         return _failed(exc)
-    if not found:
-        return JSONResponse(status_code=404, content={"detail": f"unknown interviewer {email!r}"})
     response.set_cookie("cal_user", email, httponly=True, samesite="lax")
-    return found[0]
+    return found
 
 
 @router.get("/api/me")
