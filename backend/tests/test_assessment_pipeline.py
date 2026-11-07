@@ -16,13 +16,34 @@ from recruitment_db.database import Base
 from recruitment_db.models import ApplicationResume, ApplicationScore, ScoringCriteria
 
 
+class FakeRun:
+    def __init__(self, owner) -> None:
+        from types import SimpleNamespace
+
+        self._owner = owner
+        self.thread = SimpleNamespace(id="thr_1")
+
+    async def text(self) -> str:
+        if self._owner.on_text is not None:
+            await self._owner.on_text()
+        if self._owner.text_error is not None:
+            raise self._owner.text_error
+        return "SCORED a1 total=80"
+
+
 class FakeCominty:
-    def __init__(self) -> None:
+    def __init__(self, *, text_error=None, on_text=None) -> None:
         self.calls: list = []
+        self.text_error = text_error
+        self.on_text = on_text
 
     async def start_thread(self, message: str, *, name=None):
         self.calls.append((message, name))
         return "thr_1", "SCORED a1 total=80"
+
+    async def start_run(self, message: str, *, name=None):
+        self.calls.append((message, name))
+        return FakeRun(self)
 
     async def aclose(self) -> None:
         pass
@@ -273,6 +294,67 @@ async def test_stage_change_unreachable_member_noted(factory, monkeypatch) -> No
     [(message, _)] = runtime.scheduler.calls
     assert "asha@acme.com" in message
     assert "out of band" in message
+
+
+async def test_stage_change_prefers_stored_slack_ids(factory, monkeypatch) -> None:
+    from recruitment_db.models import Interviewer
+
+    await _seed_plan(factory)
+    async with factory() as session:
+        session.add(
+            Interviewer(
+                email="asha@acme.com", name="Asha", password="x", slack_user_id="USTORED"
+            )
+        )
+        await session.commit()
+    runtime = _runtime(factory, slack=FakeSlack(known={}))
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    assert result["status"] == "scheduler_triggered"
+    assert result["coordinations"] == 1
+    assert result["unreachable"] == []
+    rows = await _scheduler_rows(factory)
+    assert [(r.slack_user_id, r.cominty_thread_id) for r in rows] == [("USTORED", "thr_1")]
+
+
+async def test_stage_change_records_before_agent_runs(factory, monkeypatch) -> None:
+    from recruitment_db.models import SchedulerTrigger
+
+    await _seed_plan(factory)
+    seen: dict = {}
+
+    async def during_run() -> None:
+        async with factory() as session:
+            trigger = (
+                await session.execute(
+                    select(SchedulerTrigger).where(
+                        SchedulerTrigger.application_id == "a1",
+                        SchedulerTrigger.stage_id == "s9",
+                    )
+                )
+            ).scalar_one_or_none()
+            seen["trigger_thread"] = trigger.cominty_thread_id if trigger else None
+        seen["threads"] = [(r.slack_user_id, r.cominty_thread_id) for r in await _scheduler_rows(factory)]
+
+    runtime = _runtime(factory, scheduler=FakeCominty(on_text=during_run))
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    assert result["status"] == "scheduler_triggered"
+    assert seen["trigger_thread"] == "thr_1"
+    assert seen["threads"] == [("UASHA", "thr_1")]
+
+
+async def test_stage_change_cleans_up_on_run_failure(factory, monkeypatch) -> None:
+    from recruitment_db.models import SchedulerTrigger
+
+    await _seed_plan(factory)
+    runtime = _runtime(factory, scheduler=FakeCominty(text_error=RuntimeError("run died")))
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    with pytest.raises(RuntimeError, match="run died"):
+        await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    async with factory() as session:
+        assert (await session.execute(select(SchedulerTrigger))).scalars().all() == []
+    assert await _scheduler_rows(factory) == []
 
 
 async def test_stage_change_notes_missing_plan_and_email(factory, monkeypatch) -> None:

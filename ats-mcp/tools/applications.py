@@ -57,6 +57,31 @@ async def get_application(application_id: str) -> dict[str, Any]:
         await client.aclose()
 
 
+async def list_interviews(
+    application_id: str | None = None,
+    candidate_id: str | None = None,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """List Harly interviews with cursor pagination (see tool description)."""
+    _require_non_blank(application_id, "application_id")
+    _require_non_blank(candidate_id, "candidate_id")
+    if not 1 <= limit <= 100:
+        raise ToolError(f"limit must be 1-100, got {limit}")
+    client = get_harly_client()
+    try:
+        return await client.list_interviews(
+            application_id=application_id,
+            candidate_id=candidate_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    except HarlyError as exc:
+        raise ToolError(str(exc)) from exc
+    finally:
+        await client.aclose()
+
+
 async def move_application(application_id: str, to_stage_id: str, confirmation: str) -> dict[str, Any]:
     """Move a Harly application to another pipeline stage (see tool description)."""
     _require_confirmation(confirmation, "move_application")
@@ -149,6 +174,19 @@ def register_tools(mcp: Any) -> None:
             "current stage, status, source, and applied date."
         ),
     )(get_application)
+    mcp.tool(
+        name="list_interviews",
+        description=(
+            "List scheduled interviews in the Harly ATS with cursor pagination. "
+            "Optional filters: application_id (UUID, for one application's "
+            "rounds), candidate_id (UUID). limit 1-100, default 20; pass "
+            "next_cursor as cursor. Returns interviews (each with id, "
+            "applicationId, title, type, status, scheduledAt) plus next_cursor "
+            "and has_more. Scheduling: call this with the application ID "
+            "before booking — if an interview already covers the round (match "
+            "by title/type), do nothing, since triggers are at-least-once."
+        ),
+    )(list_interviews)
     mcp.tool(
         name="move_application",
         description=(

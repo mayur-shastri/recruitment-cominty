@@ -50,6 +50,27 @@ async def test_list_jobs_parses_envelope_and_auth() -> None:
     assert result == {"jobs": [{"id": "j1"}], "next_cursor": "c9", "has_more": True}
 
 
+async def test_list_interviews_filters_by_application() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "i1"}], "meta": {"pagination": {"nextCursor": None, "hasMore": False}}},
+        )
+
+    client = _client(handler)
+    try:
+        result = await client.list_interviews(application_id="a1", limit=10)
+    finally:
+        await client.aclose()
+    assert seen["path"] == "/api/v1/interviews"
+    assert seen["params"] == {"limit": "10", "applicationId": "a1"}
+    assert result == {"interviews": [{"id": "i1"}], "next_cursor": None, "has_more": False}
+
+
 async def test_error_envelope_raises_harly_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"error": {"code": "not_found", "message": "nope"}})

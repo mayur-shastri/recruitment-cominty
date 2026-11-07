@@ -59,6 +59,15 @@ async def test_start_returns_thread_and_reply() -> None:
     assert client.chat.calls == [("start", "agt_1", "hi", "slack:U1", None)]
 
 
+async def test_start_run_returns_pending_run() -> None:
+    client = FakeClient()
+    service = ComintyService(client, agent_id="agt_1")  # type: ignore[arg-type]
+    run = await service.start_run("hi", name="schedule-a1")
+    assert str(run.thread.id) == "thr_1"
+    assert await run.text() == "started!"
+    assert client.chat.calls == [("start", "agt_1", "hi", "schedule-a1", None)]
+
+
 async def test_start_passes_thread_capabilities() -> None:
     client = FakeClient()
     capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=["harly_ats"]))

@@ -47,6 +47,10 @@ class FakeHarlyClient:
         self.calls.append(("scorecard", candidate_id, rating, kwargs))
         return {"id": "sc1"}
 
+    async def list_interviews(self, **kwargs):
+        self.calls.append(("interviews", kwargs))
+        return {"interviews": [], "next_cursor": None, "has_more": False}
+
     async def aclose(self) -> None:
         pass
 
@@ -77,6 +81,24 @@ async def test_list_applications_rejects_bad_limit(fake_client) -> None:
 async def test_list_applications_rejects_blank_status(fake_client) -> None:
     with pytest.raises(ToolError, match="must not be blank"):
         await applications.list_applications(status="  ")
+    assert fake_client.calls == []
+
+
+async def test_list_interviews_defaults(fake_client) -> None:
+    result = await applications.list_interviews(application_id="a1")
+    assert result == {"interviews": [], "next_cursor": None, "has_more": False}
+    assert fake_client.calls == [
+        ("interviews", {"application_id": "a1", "candidate_id": None, "limit": 20, "cursor": None})
+    ]
+
+
+async def test_list_interviews_rejects_bad_input(fake_client) -> None:
+    with pytest.raises(ToolError, match="limit"):
+        await applications.list_interviews(limit=0)
+    with pytest.raises(ToolError, match="limit"):
+        await applications.list_interviews(limit=101)
+    with pytest.raises(ToolError, match="must not be blank"):
+        await applications.list_interviews(application_id="  ")
     assert fake_client.calls == []
 
 
@@ -170,6 +192,7 @@ def test_register_tools_registers_named_tools() -> None:
     assert [name for name, _ in stub.registered] == [
         "list_applications",
         "get_application",
+        "list_interviews",
         "move_application",
         "reject_application",
         "hire_application",

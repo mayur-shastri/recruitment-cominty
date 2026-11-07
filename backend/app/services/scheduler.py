@@ -63,7 +63,8 @@ def build_schedule_message(
         f"Interview plan: {plan}. "
         "Match the stage to a plan round by name; confirm with the Hiring Manager "
         "when ambiguous. Before acting, list the application's existing Harly "
-        "interviews — if one already covers this stage, do nothing (this trigger "
+        "interviews with list_interviews — if one already covers this round "
+        "(match by title/type), do nothing (this trigger "
         "is at-least-once). Otherwise check interviewer availability with "
         "get_availability on the calendar connection and book with "
         "book_interview inside a free gap, passing this trigger event ID as "
@@ -77,6 +78,37 @@ def build_schedule_message(
             f"out of band: {', '.join(unreachable)}."
         )
     return message
+
+
+async def start_scheduler_run(
+    cominty: ComintyService,
+    *,
+    agent_id: str,
+    event_id: str,
+    application_id: str,
+    job_id: str,
+    candidate_id: str,
+    candidate_email: str | None,
+    stage_id: str,
+    stage_name: str | None,
+    interview_plan: list | None,
+    unreachable: list[str] | None = None,
+):
+    """Start a coordination run; reply pending so mappings record first."""
+    if not agent_id:
+        raise SchedulerNotConfigured("cominty_scheduler_agent_id is not configured")
+    message = build_schedule_message(
+        event_id=event_id,
+        application_id=application_id,
+        job_id=job_id,
+        candidate_id=candidate_id,
+        candidate_email=candidate_email,
+        stage_id=stage_id,
+        stage_name=stage_name,
+        interview_plan=interview_plan,
+        unreachable=unreachable,
+    )
+    return await cominty.start_run(message, name=f"schedule-{application_id}-{stage_id}")
 
 
 async def trigger_scheduler(

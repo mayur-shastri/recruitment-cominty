@@ -7,6 +7,7 @@ through the stored token. Tokens are random — no ID-charset assumptions.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets
 from typing import Any
@@ -17,6 +18,10 @@ from recruitment_db.models import CandidateThread, SchedulerTrigger
 
 _REPLY_PREFIX = "sched-"
 _STRIP_TAGS = re.compile(r"<[^>]+>")
+# The trigger row lands just after the run starts; the agent's first send can
+# theoretically beat the commit, so poll briefly before reporting it missing.
+_TRIGGER_RETRIES = 5
+_TRIGGER_RETRY_DELAY_S = 0.5
 
 
 class CandidateCommsError(Exception):
@@ -62,20 +67,25 @@ async def send_candidate_email(
     The thread row is recorded only after a successful send, so failed
     sends leave nothing behind and the agent can retry cleanly.
     """
-    async with session_factory() as session:
-        trigger = (
-            await session.execute(
-                select(SchedulerTrigger).where(
-                    SchedulerTrigger.application_id == application_id,
-                    SchedulerTrigger.stage_id == stage_id,
+    trigger = None
+    for _ in range(_TRIGGER_RETRIES):
+        async with session_factory() as session:
+            trigger = (
+                await session.execute(
+                    select(SchedulerTrigger).where(
+                        SchedulerTrigger.application_id == application_id,
+                        SchedulerTrigger.stage_id == stage_id,
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-        if trigger is None:
-            raise CandidateCommsError(
-                f"no open coordination for application {application_id} @ {stage_id}"
-            )
-        thread_id = trigger.cominty_thread_id
+            ).scalar_one_or_none()
+        if trigger is not None:
+            break
+        await asyncio.sleep(_TRIGGER_RETRY_DELAY_S)
+    if trigger is None:
+        raise CandidateCommsError(
+            f"no open coordination for application {application_id} @ {stage_id}"
+        )
+    thread_id = trigger.cominty_thread_id
     token = secrets.token_urlsafe(9)
     reply_to = build_reply_to(token, domain)
     email_id = await resend.send_email(

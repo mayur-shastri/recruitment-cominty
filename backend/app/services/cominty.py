@@ -40,15 +40,26 @@ class ComintyService:
     async def aclose(self) -> None:
         await self._client.close()
 
-    async def start_thread(self, message: str, *, name: str | None = None) -> tuple[str, str]:
-        """Start a thread with a first message. Returns (thread_id, reply_text)."""
+    async def start_run(self, message: str, *, name: str | None = None):
+        """Start a run; the thread ID is known while the reply is still pending.
+
+        Lets the caller record thread mappings before the agent's first tool
+        call lands (the agent acts while the reply is awaited).
+        """
         try:
-            run = await self._client.chat.start(
+            return await self._client.chat.start(
                 agent_id=self._agent_id,
                 message=message,
                 name=name,
                 thread_capabilities=self._thread_capabilities,
             )
+        except ComintyError as exc:
+            raise self._wrap(exc) from exc
+
+    async def start_thread(self, message: str, *, name: str | None = None) -> tuple[str, str]:
+        """Start a thread with a first message. Returns (thread_id, reply_text)."""
+        run = await self.start_run(message, name=name)
+        try:
             return str(run.thread.id), await run.text()
         except ComintyError as exc:
             raise self._wrap(exc) from exc
