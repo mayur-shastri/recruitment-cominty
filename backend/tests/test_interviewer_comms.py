@@ -7,8 +7,10 @@ from slack_sdk.errors import SlackApiError
 
 from app.services.interviewer_comms import (
     CommsError,
+    post_dm_by_id,
     post_interviewer_dm,
     resolve_slack_id,
+    resolve_stored_slack_id,
 )
 
 
@@ -67,3 +69,50 @@ async def test_post_dm_truncates_long_text() -> None:
 async def test_post_dm_blank_rejected() -> None:
     with pytest.raises(CommsError, match="must not be blank"):
         await post_interviewer_dm(FakeSlack(), "asha@acme.tech", "  ")
+
+
+async def test_post_dm_by_id_skips_open() -> None:
+    class NoOpen(FakeSlack):
+        async def conversations_open(self, users: str):
+            raise AssertionError("open must not run on the direct path")
+
+    slack = NoOpen()
+    result = await post_dm_by_id(slack, "UASHA", "Hi **Asha**")
+    assert result == {"slack_user_id": "UASHA", "channel": "UASHA"}
+    assert slack.posts == [("UASHA", "Hi *Asha*")]
+
+
+async def test_post_dm_open_missing_scope_falls_back_to_direct() -> None:
+    class NoOpenScope(FakeSlack):
+        async def conversations_open(self, users: str):
+            raise _api_error("missing_scope")
+
+    slack = NoOpenScope()
+    result = await post_interviewer_dm(slack, "asha@acme.tech", "Tue?")
+    assert result == {"slack_user_id": "UASHA", "channel": "UASHA"}
+    assert slack.posts == [("UASHA", "Tue?")]
+
+
+async def test_resolve_stored_slack_id(tmp_path) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from recruitment_db.database import Base
+    from recruitment_db.models import Interviewer
+
+    url = f"sqlite+aiosqlite:///{tmp_path}/ids.db"
+    engine = create_async_engine(url)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
+    engine = create_async_engine(url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        session.add(Interviewer(email="a@t.co", name="A", password="x", slack_user_id="U1"))
+        session.add(Interviewer(email="b@t.co", name="B", password="x"))
+        await session.commit()
+    try:
+        assert await resolve_stored_slack_id(factory, "a@t.co") == "U1"
+        assert await resolve_stored_slack_id(factory, "b@t.co") is None
+        assert await resolve_stored_slack_id(factory, "ghost@t.co") is None
+    finally:
+        await engine.dispose()
