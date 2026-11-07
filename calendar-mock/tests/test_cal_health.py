@@ -61,6 +61,9 @@ def test_combined_app_exposes_mcp_and_ui(monkeypatch) -> None:
             "get_availability",
             "book_interview",
             "list_interviews",
+            "update_interview",
+            "cancel_interview",
+            "find_common_slots",
         ]
         called = _rpc(
             client, "tools/call", {"name": "health", "arguments": {}}, rpc_id=3
@@ -76,4 +79,7 @@ def test_mcp_tool_surface() -> None:
         "get_availability",
         "book_interview",
         "list_interviews",
+        "update_interview",
+        "cancel_interview",
+        "find_common_slots",
     ]
