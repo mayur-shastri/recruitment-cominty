@@ -17,7 +17,13 @@ from app.config import get_settings
 from app.integrations.resend.client import ResendClient, ResendError
 from app.services import candidate_comms
 from app.services.candidate_comms import CandidateCommsError
-from app.services.interviewer_comms import CommsError, post_interviewer_dm
+from app.services.interviewer_comms import (
+    CommsError,
+    post_dm_by_id,
+    post_interviewer_dm,
+    resolve_stored_slack_id,
+)
+from sqlalchemy.exc import SQLAlchemyError
 from recruitment_db.urls import to_async_database_url
 
 
@@ -39,10 +45,24 @@ async def send_slack_message(interviewer_email: str, text: str) -> dict[str, Any
         raise ToolError("interviewer_email must not be blank.")
     if not text or not text.strip():
         raise ToolError("text must not be blank.")
+    email = interviewer_email.strip()
+    database_url = get_settings().database_url
+    if database_url.split(":", 1)[0] in {"postgres", "postgresql", "postgresql+asyncpg"}:
+        database_url = to_async_database_url(database_url)
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        return await post_interviewer_dm(get_slack_client(), interviewer_email.strip(), text)
+        try:
+            user_id = await resolve_stored_slack_id(factory, email)
+        except SQLAlchemyError:
+            user_id = None  # store unreadable: fall through to email lookup
+        if user_id:
+            return await post_dm_by_id(get_slack_client(), user_id, text)
+        return await post_interviewer_dm(get_slack_client(), email, text)
     except CommsError as exc:
         raise ToolError(str(exc)) from exc
+    finally:
+        await engine.dispose()
 
 
 async def send_email(

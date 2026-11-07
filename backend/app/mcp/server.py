@@ -29,12 +29,13 @@ def create_comms_mcp() -> MCPServer:
     mcp.tool(
         name="send_slack_message",
         description=(
-            "DM a workspace member by email (resolves the Slack user, opens "
-            "the DM, posts). Required: interviewer_email (must belong to a "
-            "real workspace member — demo addresses fail lookup), text "
-            "(the message; keep it short and actionable). Replies arrive "
-            "back in this thread automatically — say that follow-ups are "
-            "welcome. Fails loudly on unknown emails."
+            "DM a workspace member by email (stored Slack ID posts directly; "
+            "otherwise resolves the user, opens the DM, posts). Required: "
+            "interviewer_email (must belong to a real workspace member — "
+            "demo addresses fail lookup), text (the message; keep it short "
+            "and actionable). Replies arrive back in this thread "
+            "automatically — say that follow-ups are welcome. Fails loudly "
+            "on unknown emails."
         ),
     )(send_slack_message)
     mcp.tool(

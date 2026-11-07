@@ -42,18 +42,55 @@ async def test_send_validates(fake_slack) -> None:
     assert fake_slack.calls == []
 
 
-async def test_send_forwards(fake_slack) -> None:
+async def test_send_forwards(fake_slack, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    # Empty sqlite: stored-ID lookup finds no table and falls back to legacy.
+    monkeypatch.setattr(
+        comms_tools, "get_settings", lambda: SimpleNamespace(database_url="sqlite+aiosqlite:///:memory:")
+    )
     result = await comms_tools.send_slack_message("asha@acme.tech", "Tue 10am?")
     assert result == {"slack_user_id": "U1", "channel": "D1"}
     assert fake_slack.calls == [("D1", "Tue 10am?")]
 
 
+async def test_send_prefers_stored_id(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    class NoLookup(FakeSlack):
+        async def users_lookupByEmail(self, email: str):
+            raise AssertionError("lookup must not run when a stored ID exists")
+
+        async def conversations_open(self, users: str):
+            raise AssertionError("open must not run when a stored ID exists")
+
+    slack = NoLookup()
+    monkeypatch.setattr(comms_tools, "get_slack_client", lambda: slack)
+    monkeypatch.setattr(
+        comms_tools, "get_settings", lambda: SimpleNamespace(database_url="sqlite+aiosqlite:///:memory:")
+    )
+
+    async def stored_id(factory, email: str):
+        assert email == "asha@acme.tech"
+        return "U9"
+
+    monkeypatch.setattr(comms_tools, "resolve_stored_slack_id", stored_id)
+    result = await comms_tools.send_slack_message("asha@acme.tech", "Hi")
+    assert result == {"slack_user_id": "U9", "channel": "U9"}
+    assert slack.calls == [("U9", "Hi")]
+
+
 async def test_comms_error_becomes_tool_error(monkeypatch) -> None:
+    from types import SimpleNamespace
+
     class Failing(FakeSlack):
         async def users_lookupByEmail(self, email: str):
             raise CommsError("no Slack user for ghost@acme.tech")
 
     monkeypatch.setattr(comms_tools, "get_slack_client", lambda: Failing())
+    monkeypatch.setattr(
+        comms_tools, "get_settings", lambda: SimpleNamespace(database_url="sqlite+aiosqlite:///:memory:")
+    )
     with pytest.raises(ToolError, match="no Slack user"):
         await comms_tools.send_slack_message("ghost@acme.tech", "hi")
 

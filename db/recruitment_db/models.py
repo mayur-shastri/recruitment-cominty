@@ -134,6 +134,10 @@ class Interviewer(Base):
     # Plaintext demo password (direct compare). Mock accounts only — never
     # a pattern for real users.
     password: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
+    # Workspace member ID (U...) set by the admin. When present, DMs post
+    # straight to it (chat:write only); otherwise the bridge falls back to
+    # email lookup, which needs the users:read.email scope.
+    slack_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
