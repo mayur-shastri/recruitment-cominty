@@ -36,12 +36,16 @@ class FakeReads:
         stages: list,
         error: Exception | None = None,
         pages: list | None = None,
+        candidate: dict | None = None,
+        candidate_error: Exception | None = None,
     ):
         self._application = application
         self._files = files
         self._stages = stages
         self._error = error
         self._pages = pages or []
+        self._candidate = candidate or {}
+        self._candidate_error = candidate_error
 
     async def get_application(self, application_id: str):
         if self._error:
@@ -54,6 +58,11 @@ class FakeReads:
 
     async def list_job_stages(self, job_id: str):
         return self._stages
+
+    async def get_candidate(self, candidate_id: str):
+        if self._candidate_error:
+            raise self._candidate_error
+        return self._candidate
 
     async def list_applications(self, *, limit: int = 100, cursor: str | None = None):
         if self._error:
@@ -85,6 +94,8 @@ def _runtime(factory, **overrides):
         "harly_api_key": "key",
         "assessment": FakeCominty(),
         "assessment_agent_id": "agent_1",
+        "scheduler": FakeCominty(),
+        "scheduler_agent_id": "sched_1",
         "s3_endpoint": "https://s3.test",
         "s3_bucket": "b",
         "s3_region": "auto",
@@ -163,16 +174,79 @@ async def test_harly_failure_propagates(factory, monkeypatch) -> None:
     assert runtime.assessment.calls == []
 
 
-async def test_stage_change_interview_queued(factory, monkeypatch) -> None:
-    runtime = _runtime(factory)
-    fake_reads = FakeReads(
-        {"id": "a1", "candidateId": "c1", "jobId": "j1", "currentStageId": "s9"},
-        [],
-        [{"id": "s9", "kind": "interview"}],
+def _interview_reads(**overrides):
+    base = {
+        "application": {"id": "a1", "candidateId": "c1", "jobId": "j1", "currentStageId": "s9"},
+        "files": [],
+        "stages": [{"id": "s9", "kind": "interview", "name": "R1 Interview"}],
+        "candidate": {"id": "c1", "email": "cand@test.com"},
+    }
+    for key in ("application", "files", "stages", "candidate"):
+        if key in overrides:
+            base[key] = overrides.pop(key)
+    return FakeReads(
+        base["application"], base["files"], base["stages"], candidate=base["candidate"], **overrides
     )
-    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: fake_reads)
-    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"})
-    assert result["status"] == "scheduler_queued"
+
+
+async def _seed_plan(factory, job_id: str = "j1") -> None:
+    from recruitment_db.models import JobInterviewConfig
+
+    async with factory() as session:
+        session.add(
+            JobInterviewConfig(
+                job_id=job_id,
+                rounds=[
+                    {
+                        "name": "R1 Interview",
+                        "window": {"start": "2026-11-20", "end": "2026-11-27"},
+                        "pool": [{"name": "Asha", "email": "asha@acme.com"}],
+                    }
+                ],
+                updated_by="U1",
+            )
+        )
+        await session.commit()
+
+
+async def test_stage_change_interview_triggers(factory, monkeypatch) -> None:
+    await _seed_plan(factory)
+    runtime = _runtime(factory)
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    assert result["status"] == "scheduler_triggered"
+    assert result["plan"] is True
+    assert result["email"] is True
+    [(message, name)] = runtime.scheduler.calls
+    assert name == "schedule-a1-s9"
+    assert "Trigger e9" in message
+    assert "R1 Interview (s9)" in message
+    assert "cand@test.com" in message
+    assert "Asha" in message
+    assert runtime.assessment.calls == []
+
+
+async def test_stage_change_notes_missing_plan_and_email(factory, monkeypatch) -> None:
+    runtime = _runtime(factory)
+    monkeypatch.setattr(
+        pipeline,
+        "HarlyReads",
+        lambda *a, **k: _interview_reads(candidate_error=HarlyReadError("candidate down")),
+    )
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    assert result["status"] == "scheduler_triggered"
+    assert result["plan"] is False
+    assert result["email"] is False
+    [(message, _)] = runtime.scheduler.calls
+    assert "none saved" in message
+    assert "unknown" in message
+
+
+async def test_stage_change_trigger_failure_propagates(factory, monkeypatch) -> None:
+    runtime = _runtime(factory, scheduler_agent_id="")
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    with pytest.raises(Exception, match="not configured"):
+        await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
 
 
 async def test_stage_change_other_kind_ignored(factory, monkeypatch) -> None:
@@ -183,12 +257,13 @@ async def test_stage_change_other_kind_ignored(factory, monkeypatch) -> None:
         [{"id": "s2", "kind": "screening"}],
     )
     monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: fake_reads)
-    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"})
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
     assert result == {"status": "ignored", "kind": "screening"}
-    assert await pipeline.process_stage_change(runtime, {}) == {
+    assert await pipeline.process_stage_change(runtime, {}, event_id="e9") == {
         "status": "ignored",
         "reason": "no application id",
     }
+    assert runtime.scheduler.calls == []
 
 
 async def _seed(factory, *, scores=(), resumes=(), criteria=()) -> None:

@@ -8,6 +8,7 @@ Requires-Dist: uvicorn[standard]>=0.30
 Requires-Dist: slack-sdk>=3.27
 Requires-Dist: aiohttp>=3.9
 Requires-Dist: cominty-sdk>=1.0
+Requires-Dist: acmetech-recruitment-db
 Requires-Dist: sqlalchemy[asyncio]>=2.0
 Requires-Dist: asyncpg>=0.29
 Requires-Dist: alembic>=1.13

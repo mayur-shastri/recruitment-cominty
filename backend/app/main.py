@@ -77,6 +77,13 @@ async def lifespan(app: FastAPI):
             user_id=settings.cominty_user_id,
             timeout=settings.cominty_timeout_s,
         )
+        # Scheduler toolset is finalized with the agent milestone; it needs
+        # ATS (interviews) and DB (plans) at minimum, so it starts there.
+        scheduler_client = AsyncCominty(
+            api_token=settings.cominty_api_key,
+            user_id=settings.cominty_user_id,
+            timeout=settings.cominty_timeout_s,
+        )
         app.state.harly_runtime = HarlyRuntime(
             session_factory=app.state.runtime.session_factory,
             webhook_secrets=[
@@ -94,6 +101,14 @@ async def lifespan(app: FastAPI):
                 ),
             ),
             assessment_agent_id=settings.cominty_assessment_agent_id,
+            scheduler=ComintyService(
+                scheduler_client,
+                agent_id=settings.cominty_scheduler_agent_id,
+                thread_capabilities=AgentCapabilities(
+                    mcp=McpCapability(activation="always", connections=assessment_connections),
+                ),
+            ),
+            scheduler_agent_id=settings.cominty_scheduler_agent_id,
             s3_endpoint=settings.harly_s3_endpoint,
             s3_bucket=settings.harly_s3_bucket,
             s3_region=settings.harly_s3_region,
@@ -122,6 +137,7 @@ async def lifespan(app: FastAPI):
     harly_runtime = getattr(app.state, "harly_runtime", None)
     if harly_runtime is not None:
         await harly_runtime.assessment.aclose()
+        await harly_runtime.scheduler.aclose()
 
 
 def create_app() -> FastAPI:

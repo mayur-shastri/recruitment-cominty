@@ -28,6 +28,8 @@ class HarlyRuntime:
     harly_api_key: str
     assessment: object  # ComintyService (duck-typed for tests)
     assessment_agent_id: str
+    scheduler: object  # ComintyService (duck-typed for tests)
+    scheduler_agent_id: str
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = "auto"
@@ -95,7 +97,7 @@ async def _dispatch(runtime: HarlyRuntime, event_id: str, event_type: str, data:
                 return
             await assessment_pipeline.process_new_application(runtime, app_id)
         elif event_type == "application.stage_changed":
-            await assessment_pipeline.process_stage_change(runtime, data)
+            await assessment_pipeline.process_stage_change(runtime, data, event_id=event_id)
         else:
             logger.info("ignoring harly event type=%s", event_type)
     except Exception:
