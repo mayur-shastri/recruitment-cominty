@@ -32,6 +32,46 @@ def test_empty_and_plain_passthrough() -> None:
     assert to_slack_mrkdwn("plain *already* fine") == "plain *already* fine"
 
 
+def test_table_becomes_aligned_code_block() -> None:
+    md = "| Criterion | Weight |\n|---|---|\n| Relevant experience | 30 |\n| Technical skills | 35 |"
+    assert to_slack_mrkdwn(md) == (
+        "```\n"
+        "| Criterion           | Weight |\n"
+        "|---------------------|--------|\n"
+        "| Relevant experience | 30     |\n"
+        "| Technical skills    | 35     |\n"
+        "```"
+    )
+
+
+def test_table_without_outer_pipes_and_alignment() -> None:
+    md = "Criterion | Weight\n:---|---:\nA | 1"
+    assert to_slack_mrkdwn(md) == (
+        "```\n| Criterion | Weight |\n|-----------|--------|\n| A         | 1      |\n```"
+    )
+
+
+def test_table_cells_become_plain_text() -> None:
+    md = "| A |\n|---|\n| **bold** [t](https://x) `c` |"
+    assert to_slack_mrkdwn(md) == (
+        "```\n| A                    |\n|----------------------|\n| bold t (https://x) c |\n```"
+    )
+
+
+def test_table_surrounding_text_preserved() -> None:
+    md = "Here you go:\n| A |\n|---|\n| b |\nDone **now**."
+    assert to_slack_mrkdwn(md) == "Here you go:\n```\n| A |\n|---|\n| b |\n```\nDone *now*."
+
+
+def test_pipe_text_without_delimiter_untouched() -> None:
+    assert to_slack_mrkdwn("a | b\nc | d") == "a | b\nc | d"
+
+
+def test_table_inside_code_block_untouched() -> None:
+    md = "```\n| A |\n|---|\n| b |\n```"
+    assert to_slack_mrkdwn(md) == md
+
+
 class FakeSlack:
     def __init__(self) -> None:
         self.posts: list = []
