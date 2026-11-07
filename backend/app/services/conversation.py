@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +92,28 @@ async def record_scheduler_trigger(
         assert existing is not None  # the conflicting row must exist
         return existing
     return row
+
+
+async def delete_scheduler_trigger(
+    session_factory, *, application_id: str, stage_id: str, cominty_thread_id: str
+) -> None:
+    """Compensate a failed run: remove only this thread's trigger rows."""
+    async with session_factory() as session:
+        await session.execute(
+            delete(SchedulerThread).where(
+                SchedulerThread.application_id == application_id,
+                SchedulerThread.stage_id == stage_id,
+                SchedulerThread.cominty_thread_id == cominty_thread_id,
+            )
+        )
+        await session.execute(
+            delete(SchedulerTrigger).where(
+                SchedulerTrigger.application_id == application_id,
+                SchedulerTrigger.stage_id == stage_id,
+                SchedulerTrigger.cominty_thread_id == cominty_thread_id,
+            )
+        )
+        await session.commit()
 
 
 async def get_open_scheduler_thread(

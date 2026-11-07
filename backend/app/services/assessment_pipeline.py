@@ -18,12 +18,18 @@ from app.integrations.harly.client import HarlyReadError, HarlyReads
 from app.services import resumes
 from app.services.assessment import trigger_assessment
 from app.services.conversation import (
+    delete_scheduler_trigger,
     get_scheduler_trigger,
     record_scheduler_thread,
     record_scheduler_trigger,
 )
-from app.services.interviewer_comms import CommsError, resolve_slack_id
-from app.services.scheduler import trigger_scheduler
+from app.services.interviewer_comms import (
+    CommsError,
+    resolve_slack_id,
+    resolve_stored_slack_id,
+)
+from app.services.scheduler import start_scheduler_run
+from sqlalchemy.exc import SQLAlchemyError
 from recruitment_db.models import (
     ApplicationResume,
     ApplicationScore,
@@ -194,7 +200,9 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         logger.exception("interview plan lookup failed for job %s", job_id)
 
     resolved, unreachable = await _resolve_pool_members(runtime, interview_plan)
-    thread_id, reply = await trigger_scheduler(
+    # Rows record before the reply lands: the agent acts (Slack DMs, candidate
+    # email) while the run is awaited, and those tools read these rows.
+    run = await start_scheduler_run(
         runtime.scheduler,
         agent_id=runtime.scheduler_agent_id,
         event_id=event_id,
@@ -207,6 +215,7 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         interview_plan=interview_plan,
         unreachable=unreachable,
     )
+    thread_id = str(run.thread.id)
     async with runtime.session_factory() as session:
         for email, slack_user_id in resolved.items():
             await record_scheduler_thread(
@@ -222,6 +231,16 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
             stage_id=stage_id,
             cominty_thread_id=thread_id,
         )
+    try:
+        reply = await run.text()
+    except Exception:
+        await delete_scheduler_trigger(
+            runtime.session_factory,
+            application_id=application_id,
+            stage_id=stage_id,
+            cominty_thread_id=thread_id,
+        )
+        raise
     logger.info("scheduler triggered for %s @ %s: %.80s", application_id, stage_id, reply)
     return {
         "status": "scheduler_triggered",
@@ -255,6 +274,13 @@ async def _resolve_pool_members(
     resolved: dict[str, str] = {}
     unreachable: list[str] = []
     for email in _pool_emails(interview_plan):
+        try:
+            stored = await resolve_stored_slack_id(runtime.session_factory, email)
+        except SQLAlchemyError:
+            stored = None  # store unreadable: fall through to email lookup
+        if stored:
+            resolved[email] = stored
+            continue
         try:
             resolved[email] = await resolve_slack_id(runtime.slack, email)
         except CommsError as exc:

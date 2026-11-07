@@ -95,7 +95,13 @@ async def test_send_records_thread(factory) -> None:
     assert resend.sends[0]["reply_to"] == result["reply_to"]
 
 
-async def test_send_requires_coordination(factory) -> None:
+async def test_send_requires_coordination(factory, monkeypatch) -> None:
+    import asyncio
+
+    async def instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", instant)
     resend = FakeResend()
     with pytest.raises(CandidateCommsError, match="no open coordination"):
         await send_candidate_email(

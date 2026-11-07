@@ -121,6 +121,29 @@ class HarlyClient:
         env = await self._request("GET", f"/api/v1/applications/{application_id}")
         return env.get("data", {})
 
+    async def list_interviews(
+        self,
+        *,
+        application_id: str | None = None,
+        candidate_id: str | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if application_id is not None:
+            params["applicationId"] = application_id
+        if candidate_id is not None:
+            params["candidateId"] = candidate_id
+        if cursor is not None:
+            params["cursor"] = cursor
+        env = await self._request("GET", "/api/v1/interviews", params=params)
+        meta = env.get("meta", {}).get("pagination", {})
+        return {
+            "interviews": env.get("data", []),
+            "next_cursor": meta.get("nextCursor"),
+            "has_more": meta.get("hasMore", False),
+        }
+
     async def get_candidate(self, candidate_id: str) -> dict[str, Any]:
         env = await self._request("GET", f"/api/v1/candidates/{candidate_id}")
         return env.get("data", {})

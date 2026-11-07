@@ -7,8 +7,20 @@ import pytest
 from app.services.scheduler import (
     SchedulerNotConfigured,
     build_schedule_message,
+    start_scheduler_run,
     trigger_scheduler,
 )
+
+
+class FakeRun:
+    def __init__(self, thread_id: str = "thr_9", reply: str = "ACK schedule") -> None:
+        from types import SimpleNamespace
+
+        self.thread = SimpleNamespace(id=thread_id)
+        self._reply = reply
+
+    async def text(self) -> str:
+        return self._reply
 
 
 class FakeCominty:
@@ -18,6 +30,10 @@ class FakeCominty:
     async def start_thread(self, message: str, *, name=None):
         self.calls.append((message, name))
         return "thr_9", "ACK schedule"
+
+    async def start_run(self, message: str, *, name=None):
+        self.calls.append((message, name))
+        return FakeRun()
 
     async def aclose(self) -> None:
         pass
@@ -52,6 +68,7 @@ def test_message_carries_contract() -> None:
     assert "cand@test.com" in message
     assert "R1 Interview [2026-11-20..2026-11-27] pool: Asha" in message
     assert "at-least-once" in message
+    assert "list_interviews" in message
     assert "get_availability" in message
     assert "book_interview" in message
     assert "event key" in message
@@ -89,6 +106,27 @@ async def test_trigger_starts_named_thread() -> None:
     )
     assert thread_id == "thr_9"
     assert reply == "ACK schedule"
+    [(message, name)] = cominty.calls
+    assert name == "schedule-a1-s9"
+    assert "Trigger e9" in message
+
+
+async def test_start_run_returns_pending_run() -> None:
+    cominty = FakeCominty()
+    run = await start_scheduler_run(
+        cominty,
+        agent_id="sched_1",
+        event_id="e9",
+        application_id="a1",
+        job_id="j1",
+        candidate_id="c1",
+        candidate_email="cand@test.com",
+        stage_id="s9",
+        stage_name="R1 Interview",
+        interview_plan=[{"name": "R1"}],
+    )
+    assert str(run.thread.id) == "thr_9"
+    assert await run.text() == "ACK schedule"
     [(message, name)] = cominty.calls
     assert name == "schedule-a1-s9"
     assert "Trigger e9" in message
