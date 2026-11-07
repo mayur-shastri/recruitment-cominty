@@ -47,7 +47,7 @@ recreate_backend() {
 
 await_poll_log() { # $1 = expected interval; best-effort confirmation
     for _ in $(seq 1 30); do
-        if docker logs recruitment-backend --tail=30 2>/dev/null | grep -q "assessment poll every $1"; then
+        if docker logs recruitment-backend --tail=30 2>&1 | grep -q "assessment poll every $1"; then
             log "confirmed: backend polling every ${1}s"
             return 0
         fi
