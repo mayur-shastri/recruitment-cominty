@@ -15,6 +15,7 @@ for _mod in [m for m in list(sys.modules) if m.split(".", 1)[0] in {"config", "s
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import services.scores as scores_module
 from recruitment_db.database import Base
 from recruitment_db.models import ApplicationScore, ScoringCriteria
 from services.scores import ScoresNotFoundError, ScoresStore
@@ -191,3 +192,19 @@ async def test_get_resume_round_trip(store: ScoresStore) -> None:
     assert result["resume_url"] == "https://pub.test/r.pdf"
     with pytest.raises(ScoresNotFoundError, match="a9"):
         await store.get_resume("a9")
+
+
+async def test_get_scores_store_normalizes_libpq_url(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        scores_module,
+        "get_db_mcp_settings",
+        lambda: SimpleNamespace(database_url="postgresql://u:p@h/db?sslmode=require"),
+    )
+    store = scores_module.get_scores_store()
+    try:
+        assert store._engine.url.drivername == "postgresql+asyncpg"
+        assert "ssl=require" in str(store._engine.url)
+    finally:
+        await store.aclose()

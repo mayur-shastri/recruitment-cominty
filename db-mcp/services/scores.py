@@ -20,6 +20,7 @@ from recruitment_db.models import (
     JobInterviewConfig,
     ScoringCriteria,
 )
+from recruitment_db.urls import to_async_database_url
 
 
 class ScoresError(Exception):
@@ -235,4 +236,9 @@ def get_scores_store() -> ScoresStore:
     settings = get_db_mcp_settings()
     if not settings.database_url:
         raise ScoresError("DATABASE_URL is not configured")
-    return ScoresStore(database_url=settings.database_url)
+    url = settings.database_url
+    if _is_postgres(url):
+        # .env carries a libpq-style URL; the async engine needs the
+        # asyncpg driver or SQLAlchemy reaches for psycopg (not installed).
+        url = to_async_database_url(url)
+    return ScoresStore(database_url=url)
