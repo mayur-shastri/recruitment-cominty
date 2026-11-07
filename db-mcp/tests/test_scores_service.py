@@ -149,6 +149,34 @@ async def test_list_top_empty_job(store: ScoresStore) -> None:
     assert await store.list_top("j9", 10) == {"job_id": "j9", "scores": []}
 
 
+async def test_list_top_includes_resume_url(store: ScoresStore) -> None:
+    from recruitment_db.models import ApplicationResume
+
+    for app_id, total in (("a1", 50.0), ("a2", 90.0)):
+        await store.save_score(
+            application_id=app_id,
+            job_id="j1",
+            candidate_id="c1",
+            total_score=total,
+            breakdown=[{"label": "Go", "score": total}],
+            criteria_version=2,
+        )
+    async with store._session() as session:
+        session.add(
+            ApplicationResume(
+                application_id="a2",
+                resume_url="https://pub.test/a2.pdf",
+                file_name="a2.pdf",
+                file_size=10,
+            )
+        )
+        await session.commit()
+    result = await store.list_top("j1", 10)
+    by_app = {s["application_id"]: s for s in result["scores"]}
+    assert by_app["a2"]["resume_url"] == "https://pub.test/a2.pdf"
+    assert by_app["a1"]["resume_url"] is None
+
+
 async def test_save_and_get_interview_config_round_trip(store: ScoresStore) -> None:
     rounds = [
         {

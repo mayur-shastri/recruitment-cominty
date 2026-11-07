@@ -167,7 +167,22 @@ class ScoresStore:
                         .limit(limit)
                     )
                 ).scalars()
-                return {"job_id": job_id, "scores": [self._shape(row) for row in rows]}
+                scores = [self._shape(row) for row in rows]
+                app_ids = [s["application_id"] for s in scores]
+                resume_urls: dict[str, str] = {}
+                if app_ids:
+                    resume_rows = (
+                        await session.execute(
+                            select(
+                                ApplicationResume.application_id,
+                                ApplicationResume.resume_url,
+                            ).where(ApplicationResume.application_id.in_(app_ids))
+                        )
+                    ).all()
+                    resume_urls = {app_id: url for app_id, url in resume_rows}
+                for entry in scores:
+                    entry["resume_url"] = resume_urls.get(entry["application_id"])
+                return {"job_id": job_id, "scores": scores}
         except SQLAlchemyError as exc:
             raise ScoresError("score store request failed") from exc
 
