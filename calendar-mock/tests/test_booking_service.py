@@ -107,6 +107,50 @@ async def test_book_interview_replay_returns_same_row(store: BookingStore) -> No
     assert len(listed["interviews"]) == 1
 
 
+async def test_book_interview_replay_cross_app_rejected(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    await store.book_interview(
+        interviewer_email="asha@acme.tech",
+        starts_at=_dt(20, 10),
+        ends_at=_dt(20, 11),
+        title="R1",
+        event_key="evt-1",
+        application_id="a1",
+    )
+    with pytest.raises(BookingError, match="different booking"):
+        await store.book_interview(
+            interviewer_email="asha@acme.tech",
+            starts_at=_dt(21, 10),
+            ends_at=_dt(21, 11),
+            title="R1",
+            event_key="evt-1",
+            application_id="a2",
+        )
+    listed = await store.list_interviews(application_id=None)
+    assert len(listed["interviews"]) == 1
+
+
+async def test_book_interview_replay_time_mismatch_rejected(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    await store.book_interview(
+        interviewer_email="asha@acme.tech",
+        starts_at=_dt(20, 10),
+        ends_at=_dt(20, 11),
+        title="R1",
+        event_key="evt-1",
+        application_id="a1",
+    )
+    with pytest.raises(BookingError, match="different booking"):
+        await store.book_interview(
+            interviewer_email="asha@acme.tech",
+            starts_at=_dt(20, 13),
+            ends_at=_dt(20, 14),
+            title="R1",
+            event_key="evt-1",
+            application_id="a1",
+        )
+
+
 async def test_book_interview_unknown_interviewer(store: BookingStore) -> None:
     with pytest.raises(BookingNotFoundError, match="nobody@acme.tech"):
         await store.book_interview(
