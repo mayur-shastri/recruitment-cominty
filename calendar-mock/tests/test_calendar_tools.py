@@ -44,6 +44,18 @@ class FakeBookingStore:
         self.calls.append(("interviews", application_id, limit))
         return {"interviews": []}
 
+    async def update_interview(self, event_id, **kwargs):
+        self.calls.append(("update", event_id, kwargs))
+        return {"id": event_id, **kwargs}
+
+    async def cancel_interview(self, event_id):
+        self.calls.append(("cancel", event_id))
+        return {"status": "cancelled", "interview": {"id": event_id}}
+
+    async def find_slots(self, emails, start, end, duration_mins, limit=10):
+        self.calls.append(("slots", emails, duration_mins, limit))
+        return {"interviewers": emails, "slots": []}
+
     async def aclose(self) -> None:
         pass
 
@@ -151,7 +163,58 @@ async def test_store_errors_become_tool_errors(monkeypatch) -> None:
         )
 
 
-def test_register_all_exposes_four_tools() -> None:
+async def test_update_interview_validates(fake_store) -> None:
+    with pytest.raises(ToolError, match="event_id"):
+        await calendar.update_interview(0, title="x")
+    with pytest.raises(ToolError, match="at least one"):
+        await calendar.update_interview(7)
+    with pytest.raises(ToolError, match="timezone"):
+        await calendar.update_interview(7, starts_at="2026-11-20T10:00:00")
+    with pytest.raises(ToolError, match="before end"):
+        await calendar.update_interview(
+            7, starts_at="2026-11-20T11:00:00+00:00", ends_at="2026-11-20T10:00:00+00:00"
+        )
+    assert fake_store.calls == []
+
+
+async def test_update_interview_forwards(fake_store) -> None:
+    result = await calendar.update_interview(
+        7, starts_at="2026-11-21T14:00:00+00:00", ends_at="2026-11-21T15:00:00+00:00"
+    )
+    assert result["id"] == 7
+    name, event_id, kwargs = fake_store.calls[0]
+    assert (name, event_id) == ("update", 7)
+    assert isinstance(kwargs["starts_at"], datetime)
+
+
+async def test_cancel_interview(fake_store) -> None:
+    with pytest.raises(ToolError, match="event_id"):
+        await calendar.cancel_interview(-1)
+    result = await calendar.cancel_interview(7)
+    assert result["status"] == "cancelled"
+    assert fake_store.calls == [("cancel", 7)]
+
+
+async def test_find_common_slots_validates(fake_store) -> None:
+    good = {
+        "interviewer_emails": ["asha@acme.tech"],
+        "start": "2026-11-20T00:00:00+00:00",
+        "end": "2026-11-21T00:00:00+00:00",
+        "duration_mins": 60,
+    }
+    with pytest.raises(ToolError, match="duration"):
+        await calendar.find_common_slots(**{**good, "duration_mins": 5})
+    with pytest.raises(ToolError, match="duration"):
+        await calendar.find_common_slots(**{**good, "duration_mins": 999})
+    with pytest.raises(ToolError, match="limit"):
+        await calendar.find_common_slots(**{**good, "limit": 0})
+    with pytest.raises(ToolError, match="non-empty"):
+        await calendar.find_common_slots(**{**good, "interviewer_emails": []})
+    await calendar.find_common_slots(**good)
+    assert fake_store.calls == [(("slots", ["asha@acme.tech"], 60, 10))]
+
+
+def test_register_all_exposes_seven_tools() -> None:
     class Stub:
         def __init__(self) -> None:
             self.registered: list = []
@@ -170,5 +233,8 @@ def test_register_all_exposes_four_tools() -> None:
         "get_availability",
         "book_interview",
         "list_interviews",
+        "update_interview",
+        "cancel_interview",
+        "find_common_slots",
     ]
     assert all(description for _, description in stub.registered)

@@ -22,6 +22,7 @@ from recruitment_db.database import Base
 from recruitment_db.models import CalendarEvent, Interviewer
 from services.booking import (
     BookingConflictError,
+    BookingError,
     BookingNotFoundError,
     BookingStore,
 )
@@ -206,6 +207,99 @@ async def test_get_booking_store_normalizes_libpq_url(monkeypatch) -> None:
         assert "ssl=require" in str(store._engine.url)
     finally:
         await store.aclose()
+
+
+async def _book(
+    store: BookingStore, key: str, day: int = 20, hour: int = 10, email: str = "asha@acme.tech"
+):
+    return await store.book_interview(
+        interviewer_email=email,
+        starts_at=_dt(day, hour),
+        ends_at=_dt(day, hour + 1),
+        title="R1",
+        event_key=key,
+        application_id="a1",
+    )
+
+
+async def test_update_interview_reschedules(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    booked = await _book(store, "e1")
+    moved = await store.update_interview(booked["id"], starts_at=_dt(21, 14), ends_at=_dt(21, 15))
+    assert moved["starts_at"] == "2026-11-21T14:00:00+00:00"
+    assert moved["event_key"] == "e1"
+
+
+async def test_update_interview_validates(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    booked = await _book(store, "e1")
+    await _book(store, "e2", hour=14)
+    with pytest.raises(BookingConflictError, match="overlaps"):
+        await store.update_interview(booked["id"], starts_at=_dt(20, 14, 30), ends_at=_dt(20, 15, 30))
+    with pytest.raises(BookingError, match="before end"):
+        await store.update_interview(booked["id"], starts_at=_dt(20, 12), ends_at=_dt(20, 11))
+    with pytest.raises(BookingNotFoundError, match="no interview 999"):
+        await store.update_interview(999, title="x")
+    with pytest.raises(BookingError, match="not an interview"):
+        async with store._session() as session:
+            from recruitment_db.models import CalendarEvent
+
+            row = CalendarEvent(
+                interviewer_email="asha@acme.tech",
+                starts_at=_dt(22, 9),
+                ends_at=_dt(22, 10),
+                kind="busy",
+                title="Focus",
+            )
+            session.add(row)
+            await session.commit()
+            busy_id = row.id
+        await store.update_interview(busy_id, title="x")
+
+
+async def test_update_interview_moves_interviewer(store: BookingStore) -> None:
+    await _seed_interviewer(store, "asha@acme.tech")
+    await _seed_interviewer(store, "ravi@acme.tech")
+    booked = await _book(store, "e1")
+    moved = await store.update_interview(booked["id"], interviewer_email="ravi@acme.tech")
+    assert moved["interviewer_email"] == "ravi@acme.tech"
+    with pytest.raises(BookingNotFoundError, match="ghost@acme.tech"):
+        await store.update_interview(booked["id"], interviewer_email="ghost@acme.tech")
+
+
+async def test_cancel_interview(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    booked = await _book(store, "e1")
+    result = await store.cancel_interview(booked["id"])
+    assert result["status"] == "cancelled"
+    assert result["interview"]["id"] == booked["id"]
+    with pytest.raises(BookingNotFoundError, match="no interview"):
+        await store.cancel_interview(booked["id"])
+    # Slot is free again.
+    again = await _book(store, "e2")
+    assert again["starts_at"] == "2026-11-20T10:00:00+00:00"
+
+
+async def test_find_slots_common_gaps(store: BookingStore) -> None:
+    await _seed_interviewer(store, "asha@acme.tech")
+    await _seed_interviewer(store, "ravi@acme.tech")
+    await store.add_busy_block(
+        interviewer_email="asha@acme.tech", starts_at=_dt(20, 9), ends_at=_dt(20, 12), title="Busy"
+    )
+    await store.add_busy_block(
+        interviewer_email="ravi@acme.tech", starts_at=_dt(20, 14), ends_at=_dt(20, 16), title="Busy"
+    )
+    result = await store.find_slots(
+        ["asha@acme.tech", "ravi@acme.tech"], _dt(20, 9), _dt(20, 17), duration_mins=60
+    )
+    windows = [(s["starts_at"], s["ends_at"]) for s in result["slots"]]
+    assert ("2026-11-20T12:00:00+00:00", "2026-11-20T14:00:00+00:00") in windows
+    assert ("2026-11-20T16:00:00+00:00", "2026-11-20T17:00:00+00:00") in windows
+    # Too-long durations filter everything.
+    narrow = await store.find_slots(["asha@acme.tech"], _dt(20, 9), _dt(20, 17), duration_mins=480)
+    assert narrow["slots"] == []
+    with pytest.raises(BookingNotFoundError, match="ghost@acme.tech"):
+        await store.find_slots(["ghost@acme.tech"], _dt(20, 9), _dt(20, 17), duration_mins=30)
 
 
 async def test_list_interviews_filters_application(store: BookingStore) -> None:

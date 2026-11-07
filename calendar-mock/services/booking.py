@@ -207,6 +207,111 @@ class BookingStore:
         except SQLAlchemyError as exc:
             raise BookingError("calendar store request failed") from exc
 
+    async def update_interview(
+        self,
+        event_id: int,
+        *,
+        starts_at: datetime | None = None,
+        ends_at: datetime | None = None,
+        interviewer_email: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Reschedule/retitle a booked interview (partial update)."""
+        try:
+            async with self._sessions() as session:
+                row = await session.get(CalendarEvent, event_id)
+                if row is None or row.kind != "interview":
+                    if row is None:
+                        raise BookingNotFoundError(f"no interview {event_id}")
+                    raise BookingError(f"event {event_id} is not an interview")
+                email = interviewer_email or row.interviewer_email
+                if interviewer_email is not None and await session.get(Interviewer, email) is None:
+                    raise BookingNotFoundError(f"unknown interviewer {email!r}")
+                new_start = starts_at or row.starts_at
+                new_end = ends_at or row.ends_at
+                if not new_start < new_end:
+                    raise BookingError("starts_at must be before end.")
+                await self._reject_overlap(
+                    session,
+                    interviewer_email=email,
+                    starts_at=new_start,
+                    ends_at=new_end,
+                    exclude_id=event_id,
+                )
+                row.interviewer_email = email
+                row.starts_at = new_start
+                row.ends_at = new_end
+                if title is not None:
+                    row.title = title
+                await session.commit()
+                return self._shape(row)
+        except BookingError:
+            raise  # noqa: TRY203 (re-raised user-safe as-is, incl. subclasses)
+        except SQLAlchemyError as exc:
+            raise BookingError("calendar store request failed") from exc
+
+    async def cancel_interview(self, event_id: int) -> dict[str, Any]:
+        """Delete a booked interview, freeing its slot."""
+        try:
+            async with self._sessions() as session:
+                row = await session.get(CalendarEvent, event_id)
+                if row is None or row.kind != "interview":
+                    if row is None:
+                        raise BookingNotFoundError(f"no interview {event_id}")
+                    raise BookingError(f"event {event_id} is not an interview")
+                shaped = self._shape(row)
+                await session.delete(row)
+                await session.commit()
+                return {"status": "cancelled", "interview": shaped}
+        except BookingError:
+            raise
+        except SQLAlchemyError as exc:
+            raise BookingError("calendar store request failed") from exc
+
+    async def find_slots(
+        self, emails: list[str], start: datetime, end: datetime, duration_mins: int, limit: int = 10
+    ) -> dict[str, Any]:
+        """Common free windows across interviewers fitting duration_mins."""
+        try:
+            async with self._sessions() as session:
+                known = {r.email for r in (await session.execute(select(Interviewer))).scalars()}
+                unknown = [e for e in emails if e not in known]
+                if unknown:
+                    raise BookingNotFoundError(f"unknown interviewer {unknown[0]!r}")
+                rows = (
+                    await session.execute(
+                        select(CalendarEvent.starts_at, CalendarEvent.ends_at)
+                        .where(
+                            CalendarEvent.interviewer_email.in_(emails),
+                            CalendarEvent.starts_at < end,
+                            CalendarEvent.ends_at > start,
+                        )
+                        .order_by(CalendarEvent.starts_at)
+                    )
+                ).all()
+        except BookingNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise BookingError("calendar store request failed") from exc
+        busy: list[tuple[datetime, datetime]] = []
+        for raw_start, raw_end in rows:
+            s = raw_start if raw_start.tzinfo else raw_start.replace(tzinfo=timezone.utc)
+            e = raw_end if raw_end.tzinfo else raw_end.replace(tzinfo=timezone.utc)
+            s, e = max(s, start), min(e, end)
+            if s < e and (not busy or s > busy[-1][1]):
+                busy.append((s, e))
+            elif s < e:
+                busy[-1] = (busy[-1][0], max(busy[-1][1], e))
+        slots: list[dict[str, str]] = []
+        cursor = start
+        for s, e in busy:
+            if (s - cursor).total_seconds() >= duration_mins * 60:
+                slots.append({"starts_at": _iso(cursor), "ends_at": _iso(s)})
+            cursor = max(cursor, e)
+        if (end - cursor).total_seconds() >= duration_mins * 60:
+            slots.append({"starts_at": _iso(cursor), "ends_at": _iso(end)})
+        return {"interviewers": emails, "slots": slots[:limit]}
+
     async def list_interviews(
         self, application_id: str | None = None, limit: int = 50
     ) -> dict[str, Any]:
@@ -233,18 +338,17 @@ class BookingStore:
         return BookingStore._shape(row) if row is not None else None
 
     @staticmethod
-    async def _reject_overlap(session, *, interviewer_email: str, starts_at, ends_at) -> None:
-        clash = (
-            await session.execute(
-                select(CalendarEvent)
-                .where(
-                    CalendarEvent.interviewer_email == interviewer_email,
-                    CalendarEvent.starts_at < ends_at,
-                    CalendarEvent.ends_at > starts_at,
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+    async def _reject_overlap(
+        session, *, interviewer_email: str, starts_at, ends_at, exclude_id: int | None = None
+    ) -> None:
+        query = select(CalendarEvent).where(
+            CalendarEvent.interviewer_email == interviewer_email,
+            CalendarEvent.starts_at < ends_at,
+            CalendarEvent.ends_at > starts_at,
+        )
+        if exclude_id is not None:
+            query = query.where(CalendarEvent.id != exclude_id)
+        clash = (await session.execute(query.limit(1))).scalar_one_or_none()
         if clash is not None:
             raise BookingConflictError(
                 f"overlaps {_iso(clash.starts_at)}-{_iso(clash.ends_at)} "

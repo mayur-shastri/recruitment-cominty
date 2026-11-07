@@ -34,9 +34,10 @@
   .acct .meta { overflow: hidden; }
   .acct .meta b { display: block; font-weight: 500; }
   .acct .meta span { color: var(--muted); font-size: 0.8rem; }
-  #pw-row { margin-top: 1rem; }
-  #pw-row input { width: 100%; padding: 0.65rem 0.75rem; font-size: 1rem; border: 1px solid var(--line); border-radius: 6px; }
-  #pw-row input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+  #login-form { margin-top: 1rem; }
+  #login-form input { width: 100%; padding: 0.65rem 0.75rem; font-size: 1rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 0.6rem; }
+  #login-form input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+  .hint { color: var(--muted); font-size: 0.85rem; }
   #signin { margin-top: 1rem; width: 100%; padding: 0.65rem; font-size: 0.95rem; font-weight: 600; color: #fff; background: var(--blue); border: none; border-radius: 6px; cursor: pointer; }
   #signin:hover { background: var(--blue-dark); }
   #login-err { color: #b3261e; font-size: 0.85rem; margin-top: 0.6rem; min-height: 1.2em; }
@@ -110,7 +111,9 @@
     <h1>AcmeTech Calendar</h1>
     <p class="sub">Sign in as an interviewer to view your calendar</p>
     <div id="accts"></div>
-    <div id="pw-row" hidden>
+    <p id="no-accts" class="hint" hidden>No interviewer accounts found.</p>
+    <div id="login-form">
+      <input id="email" type="email" placeholder="Email" autocomplete="username">
       <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
       <button id="signin">Sign in</button>
       <div id="login-err"></div>
@@ -167,7 +170,7 @@
 
 <script>
 const DAY_MS = 86400000, HOUR_PX = 52, DAY_START_H = 8, DAY_END_H = 19;
-let me = null, weekStart = monday(new Date()), pickedEmail = null;
+let me = null, weekStart = monday(new Date());
 
 function monday(d) {
   const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -183,17 +186,18 @@ async function loadAccounts() {
   const data = await (await fetch("/api/interviewers")).json();
   const box = document.getElementById("accts");
   box.innerHTML = "";
+  document.getElementById("no-accts").hidden = data.interviewers.length > 0;
   data.interviewers.forEach((p) => {
     const b = document.createElement("button");
     b.className = "acct";
+    b.type = "button";
     b.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="meta"><b></b><span></span></span>`;
     b.querySelector("b").textContent = p.name;
     b.querySelector("span span").textContent = p.email;
     b.onclick = () => {
-      pickedEmail = p.email;
+      document.getElementById("email").value = p.email;
       document.querySelectorAll(".acct").forEach((el) => el.classList.remove("selected"));
       b.classList.add("selected");
-      document.getElementById("pw-row").hidden = false;
       document.getElementById("login-err").textContent = "";
       document.getElementById("pw").focus();
     };
@@ -201,19 +205,23 @@ async function loadAccounts() {
   });
 }
 async function signIn() {
-  if (!pickedEmail) return;
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("pw").value;
+  const err = document.getElementById("login-err");
+  if (!email || !password) { err.textContent = "Enter your email and password."; return; }
   const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({email: pickedEmail, password: document.getElementById("pw").value})});
+    body: JSON.stringify({email, password})});
   if (!r.ok) {
     const detail = ((await r.json()).detail || "Sign-in failed").toLowerCase();
-    document.getElementById("login-err").textContent = detail.charAt(0).toUpperCase() + detail.slice(1);
+    err.textContent = detail.charAt(0).toUpperCase() + detail.slice(1);
     return;
   }
   me = await r.json();
   enterApp();
 }
 document.getElementById("signin").onclick = signIn;
-document.getElementById("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
+["email", "pw"].forEach((id) =>
+  document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); }));
 document.getElementById("logout").onclick = () => location.reload();
 
 function enterApp() {

@@ -17,6 +17,8 @@ from sqlalchemy import select
 from app.integrations.harly.client import HarlyReadError, HarlyReads
 from app.services import resumes
 from app.services.assessment import trigger_assessment
+from app.services.conversation import record_scheduler_thread
+from app.services.interviewer_comms import CommsError, resolve_slack_id
 from app.services.scheduler import trigger_scheduler
 from recruitment_db.models import (
     ApplicationResume,
@@ -178,7 +180,8 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
     except Exception:
         logger.exception("interview plan lookup failed for job %s", job_id)
 
-    reply = await trigger_scheduler(
+    resolved, unreachable = await _resolve_pool_members(runtime, interview_plan)
+    thread_id, reply = await trigger_scheduler(
         runtime.scheduler,
         agent_id=runtime.scheduler_agent_id,
         event_id=event_id,
@@ -189,7 +192,18 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         stage_id=stage_id,
         stage_name=stage_name,
         interview_plan=interview_plan,
+        unreachable=unreachable,
     )
+    if resolved:
+        async with runtime.session_factory() as session:
+            for email, slack_user_id in resolved.items():
+                await record_scheduler_thread(
+                    session,
+                    slack_user_id=slack_user_id,
+                    application_id=application_id,
+                    stage_id=stage_id,
+                    cominty_thread_id=thread_id,
+                )
     logger.info("scheduler triggered for %s @ %s: %.80s", application_id, stage_id, reply)
     return {
         "status": "scheduler_triggered",
@@ -198,8 +212,40 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         "stage_id": stage_id,
         "plan": interview_plan is not None,
         "email": candidate_email is not None,
+        "coordinations": len(resolved),
+        "unreachable": unreachable,
         "reply_prefix": reply[:80],
     }
+
+
+def _pool_emails(interview_plan: list | None) -> list[str]:
+    """Deduped pool emails across rounds (defensive: plans are HM-authored)."""
+    emails: list[str] = []
+    for entry in interview_plan or []:
+        pool = entry.get("pool") if isinstance(entry, dict) else None
+        for person in pool or []:
+            email = person.get("email") if isinstance(person, dict) else None
+            if isinstance(email, str) and email.strip() and email not in emails:
+                emails.append(email.strip())
+    return emails
+
+
+async def _resolve_pool_members(
+    runtime, interview_plan: list | None
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve pool emails to Slack users. Per-email soft fail, never raises."""
+    resolved: dict[str, str] = {}
+    unreachable: list[str] = []
+    for email in _pool_emails(interview_plan):
+        try:
+            resolved[email] = await resolve_slack_id(runtime.slack, email)
+        except CommsError as exc:
+            logger.warning("scheduler coordination skipping %s: %s", email, exc)
+            unreachable.append(email)
+        except Exception:
+            logger.exception("scheduler coordination lookup failed for %s", email)
+            unreachable.append(email)
+    return resolved, unreachable
 
 
 async def sweep_unscored_applications(

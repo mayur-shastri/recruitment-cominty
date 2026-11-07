@@ -30,6 +30,7 @@ class HarlyRuntime:
     assessment_agent_id: str
     scheduler: object  # ComintyService (duck-typed for tests)
     scheduler_agent_id: str
+    slack: object  # AsyncWebClient (duck-typed for tests): pool-email resolution
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = "auto"

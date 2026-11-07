@@ -6,7 +6,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.services.conversation import get_thread, is_hiring_manager, record_thread
+from app.services.conversation import (
+    get_open_scheduler_thread,
+    get_thread,
+    is_hiring_manager,
+    record_scheduler_thread,
+    record_thread,
+)
 from recruitment_db.database import Base
 from recruitment_db.models import Employee
 
@@ -53,3 +59,17 @@ async def test_concurrent_record_returns_existing(session: AsyncSession) -> None
     await record_thread(session, slack_user_id="U1", cominty_user_id="user_x", cominty_thread_id="thr_1")
     existing = await record_thread(session, slack_user_id="U1", cominty_user_id="user_x", cominty_thread_id="thr_2")
     assert existing.cominty_thread_id == "thr_1"
+
+
+async def test_scheduler_thread_latest_open_wins(session: AsyncSession) -> None:
+    assert await get_open_scheduler_thread(session, "U9") is None
+    await record_scheduler_thread(
+        session, slack_user_id="U9", application_id="a1", stage_id="s1", cominty_thread_id="thr_old"
+    )
+    await record_scheduler_thread(
+        session, slack_user_id="U9", application_id="a2", stage_id="s2", cominty_thread_id="thr_new"
+    )
+    found = await get_open_scheduler_thread(session, "U9")
+    assert found is not None and found.cominty_thread_id == "thr_new"
+    assert found.application_id == "a2"
+    assert await get_open_scheduler_thread(session, "U_other") is None

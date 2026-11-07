@@ -47,6 +47,10 @@ def test_index_serves_html(client: TestClient) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "interviewer" in resp.text.lower()
+    # Login form renders unconditionally (never gated on account clicks).
+    assert 'id="signin"' in resp.text
+    assert ">Sign in<" in resp.text
+    assert 'id="email"' in resp.text
 
 
 def test_login_and_me_round_trip(client: TestClient) -> None:

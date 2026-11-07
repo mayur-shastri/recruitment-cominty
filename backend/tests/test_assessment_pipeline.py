@@ -28,6 +28,18 @@ class FakeCominty:
         pass
 
 
+class FakeSlack:
+    def __init__(self, known: dict | None = None) -> None:
+        self.known = known if known is not None else {"asha@acme.com": "UASHA"}
+
+    async def users_lookupByEmail(self, email: str):
+        if email not in self.known:
+            from slack_sdk.errors import SlackApiError
+
+            raise SlackApiError("no user", {"ok": False, "error": "users_not_found"})
+        return {"ok": True, "user": {"id": self.known[email]}}
+
+
 class FakeReads:
     def __init__(
         self,
@@ -96,6 +108,7 @@ def _runtime(factory, **overrides):
         "assessment_agent_id": "agent_1",
         "scheduler": FakeCominty(),
         "scheduler_agent_id": "sched_1",
+        "slack": FakeSlack(),
         "s3_endpoint": "https://s3.test",
         "s3_bucket": "b",
         "s3_region": "auto",
@@ -224,6 +237,42 @@ async def test_stage_change_interview_triggers(factory, monkeypatch) -> None:
     assert "cand@test.com" in message
     assert "Asha" in message
     assert runtime.assessment.calls == []
+
+
+async def _scheduler_rows(factory):
+    from recruitment_db.models import SchedulerThread
+
+    async with factory() as session:
+        return (await session.execute(select(SchedulerThread))).scalars().all()
+
+
+async def test_stage_change_records_coordinations(factory, monkeypatch) -> None:
+    await _seed_plan(factory)
+    runtime = _runtime(factory)
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    assert result["status"] == "scheduler_triggered"
+    assert result["coordinations"] == 1
+    assert result["unreachable"] == []
+    rows = await _scheduler_rows(factory)
+    assert [(r.slack_user_id, r.application_id, r.stage_id, r.status) for r in rows] == [
+        ("UASHA", "a1", "s9", "open")
+    ]
+    assert rows[0].cominty_thread_id == "thr_1"
+
+
+async def test_stage_change_unreachable_member_noted(factory, monkeypatch) -> None:
+    await _seed_plan(factory)
+    runtime = _runtime(factory, slack=FakeSlack(known={}))
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    result = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e9")
+    assert result["status"] == "scheduler_triggered"
+    assert result["coordinations"] == 0
+    assert result["unreachable"] == ["asha@acme.com"]
+    assert await _scheduler_rows(factory) == []
+    [(message, _)] = runtime.scheduler.calls
+    assert "asha@acme.com" in message
+    assert "out of band" in message
 
 
 async def test_stage_change_notes_missing_plan_and_email(factory, monkeypatch) -> None:

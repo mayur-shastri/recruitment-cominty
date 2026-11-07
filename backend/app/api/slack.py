@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.integrations.slack.verification import verify_slack_signature
 from recruitment_db.models import SlackEvent
 from app.services.cominty import ComintyService, ComintyServiceError
-from app.services.conversation import get_thread, is_hiring_manager, record_thread
+from app.services.conversation import (
+    get_open_scheduler_thread,
+    get_thread,
+    is_hiring_manager,
+    record_thread,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,7 @@ class Runtime:
     engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
     cominty: ComintyService
+    scheduler: ComintyService  # interviewer coordination threads (duck-typed for tests)
     cominty_user_id: str
     slack: Any  # AsyncWebClient (duck-typed for tests)
     signing_secret: str
@@ -114,7 +120,7 @@ async def _handle_dm(runtime: Runtime, *, channel: str, user: str, text: str, ev
         return
     async with runtime.session_factory() as session:
         if not await is_hiring_manager(session, user):
-            logger.info("ignoring slack event %s: user is not a hiring manager", event_id)
+            await _handle_interviewer_reply(runtime, session, channel=channel, user=user, text=text)
             return
         existing = await get_thread(session, user)
         try:
@@ -131,6 +137,31 @@ async def _handle_dm(runtime: Runtime, *, channel: str, user: str, text: str, ev
         except ComintyServiceError as exc:
             logger.exception("cominty request failed (transient=%s)", exc.transient)
             reply = "Sorry — I couldn't reach the recruiting agent just now. Please try again in a bit."
+    reply = reply.strip() or "(empty reply)"
+    if len(reply) > _SLACK_MAX_TEXT:
+        reply = reply[:_SLACK_MAX_TEXT] + "… [truncated]"
+    await runtime.slack.chat_postMessage(channel=channel, text=reply)
+
+
+async def _handle_interviewer_reply(
+    runtime: Runtime, session: AsyncSession, *, channel: str, user: str, text: str
+) -> None:
+    """Route an interviewer's DM into their open coordination thread, if any.
+
+    HM threads take precedence implicitly: hiring managers never reach this
+    path, so a user who is both HM and interviewer always talks to the
+    recruiter here. One active coordination per interviewer is assumed —
+    the latest open row wins.
+    """
+    coord = await get_open_scheduler_thread(session, user)
+    if coord is None:
+        logger.info("ignoring slack DM from %s: no open coordination", user)
+        return
+    try:
+        reply = await runtime.scheduler.send_message(coord.cominty_thread_id, text)
+    except ComintyServiceError as exc:
+        logger.exception("scheduler follow-up failed (transient=%s)", exc.transient)
+        reply = "Sorry — I couldn't reach the scheduling agent just now. Please try again in a bit."
     reply = reply.strip() or "(empty reply)"
     if len(reply) > _SLACK_MAX_TEXT:
         reply = reply[:_SLACK_MAX_TEXT] + "… [truncated]"
