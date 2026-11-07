@@ -136,6 +136,13 @@ class BookingStore:
                     raise BookingNotFoundError(f"unknown interviewer {interviewer_email!r}")
                 replay = await self._replay(session, event_key)
                 if replay is not None:
+                    self._verify_replay(
+                        replay,
+                        application_id=application_id,
+                        interviewer_email=interviewer_email,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                    )
                     return replay
                 await self._reject_overlap(
                     session, interviewer_email=interviewer_email, starts_at=starts_at, ends_at=ends_at
@@ -163,7 +170,15 @@ class BookingStore:
                     ).scalar_one_or_none()
                     if winner is None:
                         raise BookingError("calendar store request failed")
-                    return self._shape(winner)
+                    shaped = self._shape(winner)
+                    self._verify_replay(
+                        shaped,
+                        application_id=application_id,
+                        interviewer_email=interviewer_email,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                    )
+                    return shaped
                 return self._shape(row)
         except (BookingNotFoundError, BookingConflictError):
             raise
@@ -336,6 +351,29 @@ class BookingStore:
             await session.execute(select(CalendarEvent).where(CalendarEvent.event_key == event_key))
         ).scalar_one_or_none()
         return BookingStore._shape(row) if row is not None else None
+
+    @staticmethod
+    def _verify_replay(
+        replay: dict[str, Any],
+        *,
+        application_id: str | None,
+        interviewer_email: str,
+        starts_at,
+        ends_at,
+    ) -> None:
+        """Reject a replayed row that isn't the requested booking (key collision)."""
+        if (
+            replay["application_id"] == application_id
+            and replay["interviewer_email"] == interviewer_email
+            and replay["starts_at"] == _iso(starts_at)
+            and replay["ends_at"] == _iso(ends_at)
+        ):
+            return
+        raise BookingError(
+            f"event key {replay['event_key']!r} is already used by a different booking "
+            f"(application {replay['application_id']}, {replay['interviewer_email']} "
+            f"@ {replay['starts_at']}); book with a fresh event key instead of reusing it"
+        )
 
     @staticmethod
     async def _reject_overlap(
