@@ -20,6 +20,7 @@ from app.services.conversation import (
     is_hiring_manager,
     record_thread,
 )
+from app.services.slack_format import to_slack_mrkdwn
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ async def _handle_dm(runtime: Runtime, *, channel: str, user: str, text: str, ev
     reply = reply.strip() or "(empty reply)"
     if len(reply) > _SLACK_MAX_TEXT:
         reply = reply[:_SLACK_MAX_TEXT] + "… [truncated]"
-    await runtime.slack.chat_postMessage(channel=channel, text=reply)
+    await runtime.slack.chat_postMessage(channel=channel, text=to_slack_mrkdwn(reply))
 
 
 async def _handle_interviewer_reply(
@@ -165,4 +166,4 @@ async def _handle_interviewer_reply(
     reply = reply.strip() or "(empty reply)"
     if len(reply) > _SLACK_MAX_TEXT:
         reply = reply[:_SLACK_MAX_TEXT] + "… [truncated]"
-    await runtime.slack.chat_postMessage(channel=channel, text=reply)
+    await runtime.slack.chat_postMessage(channel=channel, text=to_slack_mrkdwn(reply))
