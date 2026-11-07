@@ -17,7 +17,13 @@ from sqlalchemy import select
 from app.integrations.harly.client import HarlyReadError, HarlyReads
 from app.services import resumes
 from app.services.assessment import trigger_assessment
-from recruitment_db.models import ApplicationResume, ApplicationScore, ScoringCriteria
+from app.services.scheduler import trigger_scheduler
+from recruitment_db.models import (
+    ApplicationResume,
+    ApplicationScore,
+    JobInterviewConfig,
+    ScoringCriteria,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +139,9 @@ async def process_new_application(runtime, application_id: str) -> dict[str, Any
     return {"status": "triggered", "resume": resume_status, "reply_prefix": reply[:80]}
 
 
-async def process_stage_change(runtime, data: dict[str, Any]) -> dict[str, Any]:
-    """Route interview-stage moves to the scheduler hook (M3.6 builds it)."""
-    application_id, _, job_id = extract_ids(data)
+async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) -> dict[str, Any]:
+    """Fire the scheduler trigger when a candidate enters an interview-kind stage."""
+    application_id, candidate_id, job_id = extract_ids(data)
     if not application_id:
         logger.warning("stage_changed without application id; ignoring")
         return {"status": "ignored", "reason": "no application id"}
@@ -143,19 +149,57 @@ async def process_stage_change(runtime, data: dict[str, Any]) -> dict[str, Any]:
     application = await reads.get_application(application_id)
     stage_id = application.get("currentStageId")
     job_id = job_id or application.get("jobId")
-    kind = None
+    candidate_id = candidate_id or application.get("candidateId")
+    kind, stage_name = None, None
     if stage_id and job_id:
         for stage in await reads.list_job_stages(job_id):
             if stage.get("id") == stage_id:
                 kind = stage.get("kind")
+                stage_name = stage.get("name")
                 break
     if kind != "interview":
         logger.info("stage_changed to kind=%s; no scheduler action", kind)
         return {"status": "ignored", "kind": kind}
-    logger.info(
-        "scheduler hook: application %s entered interview stage (M3.6 TODO)", application_id
+    if not job_id or not candidate_id or not stage_id:
+        raise HarlyReadError(f"application {application_id} missing job/candidate/stage")
+
+    candidate_email: str | None = None
+    try:
+        candidate = await reads.get_candidate(candidate_id)
+        email = candidate.get("email")
+        candidate_email = str(email).strip() if email else None
+    except Exception:
+        logger.warning("candidate email lookup failed for %s; scheduler gap noted", candidate_id)
+    interview_plan: list | None = None
+    try:
+        async with runtime.session_factory() as session:
+            row = await session.get(JobInterviewConfig, job_id)
+            interview_plan = list(row.rounds) if row is not None else None
+    except Exception:
+        logger.exception("interview plan lookup failed for job %s", job_id)
+
+    reply = await trigger_scheduler(
+        runtime.scheduler,
+        agent_id=runtime.scheduler_agent_id,
+        event_id=event_id,
+        application_id=application_id,
+        job_id=job_id,
+        candidate_id=candidate_id,
+        candidate_email=candidate_email,
+        stage_id=stage_id,
+        stage_name=stage_name,
+        interview_plan=interview_plan,
     )
-    return {"status": "scheduler_queued", "application_id": application_id, "job_id": job_id}
+    logger.info("scheduler triggered for %s @ %s: %.80s", application_id, stage_id, reply)
+    return {
+        "status": "scheduler_triggered",
+        "application_id": application_id,
+        "job_id": job_id,
+        "stage_id": stage_id,
+        "plan": interview_plan is not None,
+        "email": candidate_email is not None,
+        "reply_prefix": reply[:80],
+    }
 
 
 async def sweep_unscored_applications(

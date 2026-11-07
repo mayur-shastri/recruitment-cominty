@@ -55,6 +55,10 @@ class HarlyReads:
         env = await self._get(f"/api/v1/applications/{application_id}")
         return env.get("data", {})
 
+    async def get_candidate(self, candidate_id: str) -> dict[str, Any]:
+        env = await self._get(f"/api/v1/candidates/{candidate_id}")
+        return env.get("data", {})
+
     async def list_applications(
         self, *, limit: int = 100, cursor: str | None = None
     ) -> tuple[list[dict[str, Any]], str | None]:

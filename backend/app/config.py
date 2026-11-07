@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # refuses with a clear error instead of failing the whole bridge.
     cominty_assessment_agent_id: str = ""
     cominty_db_mcp_connection_id: str = ""
+    # Scheduler trigger (M3.6). Empty means "not configured": interview-stage
+    # triggers refuse with a clear error instead of failing the receiver.
+    cominty_scheduler_agent_id: str = ""
     # Polling fallback: sweep unscored applications every interval (Harly
     # webhooks are broken upstream). Disable to rely on webhooks alone.
     assessment_poll_enabled: bool = True

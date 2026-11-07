@@ -6,10 +6,8 @@ acmetech_recruitment_backend.egg-info/requires.txt
 acmetech_recruitment_backend.egg-info/top_level.txt
 app/__init__.py
 app/config.py
-app/database.py
 app/logging_setup.py
 app/main.py
-app/models.py
 app/api/__init__.py
 app/api/slack.py
 app/integrations/__init__.py

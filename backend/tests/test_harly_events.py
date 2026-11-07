@@ -75,6 +75,8 @@ def client(factory):
         harly_api_key="",
         assessment=FakeCominty(),
         assessment_agent_id="agent_test",
+        scheduler=FakeCominty(),
+        scheduler_agent_id="sched_test",
     )
     return TestClient(app)
 
@@ -139,14 +141,14 @@ def test_created_dispatches_pipeline(client: TestClient, monkeypatch) -> None:
 def test_stage_changed_dispatches(client: TestClient, monkeypatch) -> None:
     calls: list = []
 
-    async def fake_process(runtime, data: dict):
-        calls.append(data)
+    async def fake_process(runtime, data: dict, *, event_id: str):
+        calls.append((data, event_id))
         return {"status": "ignored"}
 
     monkeypatch.setattr(harly_module.assessment_pipeline, "process_stage_change", fake_process)
     resp = _post(client, _event("e6", "application.stage_changed", {"applicationId": "a1"}))
     assert resp.json() == {"received": True}
-    assert calls == [{"applicationId": "a1"}]
+    assert calls == [({"applicationId": "a1"}, "e6")]
 
 
 async def test_failure_releases_dedupe_row(client: TestClient, factory, monkeypatch) -> None:

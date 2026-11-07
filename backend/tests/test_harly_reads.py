@@ -28,6 +28,14 @@ async def test_get_application() -> None:
     assert await _reads(handler).get_application("a1") == {"id": "a1", "candidateId": "c1"}
 
 
+async def test_get_candidate() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/candidates/c1"
+        return httpx.Response(200, json={"data": {"id": "c1", "email": "c@test.com"}, "meta": {}})
+
+    assert await _reads(handler).get_candidate("c1") == {"id": "c1", "email": "c@test.com"}
+
+
 async def test_list_candidate_files_paginates() -> None:
     seen: list = []
 
