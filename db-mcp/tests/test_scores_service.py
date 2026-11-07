@@ -149,6 +149,53 @@ async def test_list_top_empty_job(store: ScoresStore) -> None:
     assert await store.list_top("j9", 10) == {"job_id": "j9", "scores": []}
 
 
+async def test_list_top_includes_resume_url(store: ScoresStore) -> None:
+    from recruitment_db.models import ApplicationResume
+
+    for app_id, total in (("a1", 50.0), ("a2", 90.0)):
+        await store.save_score(
+            application_id=app_id,
+            job_id="j1",
+            candidate_id="c1",
+            total_score=total,
+            breakdown=[{"label": "Go", "score": total}],
+            criteria_version=2,
+        )
+    async with store._session() as session:
+        session.add(
+            ApplicationResume(
+                application_id="a2",
+                resume_url="https://pub.test/a2.pdf",
+                file_name="a2.pdf",
+                file_size=10,
+            )
+        )
+        await session.commit()
+    result = await store.list_top("j1", 10)
+    by_app = {s["application_id"]: s for s in result["scores"]}
+    assert by_app["a2"]["resume_url"] == "https://pub.test/a2.pdf"
+    assert by_app["a1"]["resume_url"] is None
+
+
+async def test_list_top_includes_ats_url(store: ScoresStore, tmp_path) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path}/scores.db"
+    frontend = ScoresStore(url, harly_frontend_url="https://harly.test/")
+    try:
+        await store.save_score(
+            application_id="a1",
+            job_id="j1",
+            candidate_id="c9",
+            total_score=80.0,
+            breakdown=[{"label": "Go", "score": 80}],
+            criteria_version=2,
+        )
+        result = await frontend.list_top("j1", 10)
+        assert result["scores"][0]["ats_url"] == "https://harly.test/dashboard/candidates/c9"
+        assert (await store.list_top("j1", 10))["scores"][0]["ats_url"] is None
+    finally:
+        await frontend.aclose()
+
+
 async def test_save_and_get_interview_config_round_trip(store: ScoresStore) -> None:
     rounds = [
         {
@@ -200,7 +247,10 @@ async def test_get_scores_store_normalizes_libpq_url(monkeypatch) -> None:
     monkeypatch.setattr(
         scores_module,
         "get_db_mcp_settings",
-        lambda: SimpleNamespace(database_url="postgresql://u:p@h/db?sslmode=require"),
+        lambda: SimpleNamespace(
+            database_url="postgresql://u:p@h/db?sslmode=require",
+            harly_frontend_url="",
+        ),
     )
     store = scores_module.get_scores_store()
     try:

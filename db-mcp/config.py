@@ -21,6 +21,8 @@ class DbMcpSettings(BaseSettings):
     # Tool profile: all (dev), write (assessment agent), read (recruiter agent).
     db_mcp_profile: str = "all"
     database_url: str
+    # Harly web app base (no trailing slash needed). Empty disables ats_url links.
+    harly_frontend_url: str = ""
 
 
 @lru_cache
