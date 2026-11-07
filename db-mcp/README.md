@@ -6,8 +6,12 @@ Tools: `health`, `get_scoring_criteria`, `save_application_score`,
 `get_application_score`, `list_top_applications`, `get_application_resume`.
 Set `DB_MCP_PROFILE` to
 `read` (Recruiter Agent connection) or `write` (Assessment Agent
-connection) to narrow the surface; the default `all` is for dev. Run one
-container per profile in production (one Cominty connection each).
+connection) to narrow the surface; the default `all` is for dev.
+Production currently runs one un-split `all` container (single
+`app_database` connection shared by every agent) as a demo posture —
+tool descriptions steer agents to their tools. Split into one
+container per profile (one Cominty connection each) when real
+enforcement is needed.
 
 ## Setup (once)
 

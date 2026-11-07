@@ -8,9 +8,11 @@ from sqlalchemy.pool import NullPool
 
 from app.services.conversation import (
     get_open_scheduler_thread,
+    get_scheduler_trigger,
     get_thread,
     is_hiring_manager,
     record_scheduler_thread,
+    record_scheduler_trigger,
     record_thread,
 )
 from recruitment_db.database import Base
@@ -59,6 +61,18 @@ async def test_concurrent_record_returns_existing(session: AsyncSession) -> None
     await record_thread(session, slack_user_id="U1", cominty_user_id="user_x", cominty_thread_id="thr_1")
     existing = await record_thread(session, slack_user_id="U1", cominty_user_id="user_x", cominty_thread_id="thr_2")
     assert existing.cominty_thread_id == "thr_1"
+
+
+async def test_scheduler_trigger_record_idempotent(session: AsyncSession) -> None:
+    assert await get_scheduler_trigger(session, "a1", "s9") is None
+    first = await record_scheduler_trigger(
+        session, application_id="a1", stage_id="s9", cominty_thread_id="thr_1"
+    )
+    second = await record_scheduler_trigger(
+        session, application_id="a1", stage_id="s9", cominty_thread_id="thr_2"
+    )
+    assert first.id == second.id
+    assert second.cominty_thread_id == "thr_1"
 
 
 async def test_scheduler_thread_latest_open_wins(session: AsyncSession) -> None:

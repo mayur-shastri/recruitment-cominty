@@ -91,7 +91,7 @@ def test_backend_mount_serves_mcp_and_bridge(monkeypatch) -> None:
         cominty_recruiter_agent_id="rec",
         cominty_timeout_s=1.0,
         cominty_assessment_agent_id="",
-        cominty_db_mcp_connection_id="",
+        cominty_db_mcp_connection_id="app_database",
         cominty_scheduler_agent_id="",
         cominty_calendar_connection_id="",
         cominty_comms_connection_id="",
@@ -110,8 +110,11 @@ def test_backend_mount_serves_mcp_and_bridge(monkeypatch) -> None:
         harly_s3_public_url="",
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: fake)
-    with TestClient(create_app(), base_url="http://localhost:8000") as client:
+    app = create_app()
+    with TestClient(app, base_url="http://localhost:8000") as client:
         assert client.get("/health").status_code in (200, 503)
+        recruiter_conns = app.state.runtime.cominty._thread_capabilities.mcp.connections
+        assert recruiter_conns == ["harly_ats", "app_database"]
         init = _rpc(
             client,
             "initialize",

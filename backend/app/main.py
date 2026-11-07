@@ -73,7 +73,14 @@ async def lifespan(app: FastAPI):
         # Capabilities freeze for a thread's lifetime at start; existing threads
         # are unaffected. Register the `harly_ats` integration in Cominty before a
         # NEW thread starts, or the start call fails validation server-side.
-        recruiter_capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=[ATS_CONNECTION_ID]))
+        # Recruiter gets ATS + the (un-split, all-profile) DB connection:
+        # criteria/config authoring and top-N all run through HM chat.
+        # Demo posture: tool descriptions steer agents to their tools;
+        # no profile/container split until real enforcement is needed.
+        recruiter_connections = [
+            c for c in [ATS_CONNECTION_ID, settings.cominty_db_mcp_connection_id] if c
+        ]
+        recruiter_capabilities = AgentCapabilities(mcp=McpCapability(activation="always", connections=recruiter_connections))
         scheduler_service = ComintyService(
             AsyncCominty(
                 api_token=settings.cominty_api_key,
