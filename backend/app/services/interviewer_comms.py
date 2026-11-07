@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from slack_sdk.errors import SlackApiError
 
+from app.services.slack_format import to_slack_mrkdwn
+
 _SLACK_MAX_TEXT = 39_000  # mirrors the reply cap in app.api.slack
 
 
@@ -48,7 +50,7 @@ async def post_interviewer_dm(slack, email: str, text: str) -> dict[str, str]:
         channel = ((opened or {}).get("channel") or {}).get("id")
         if not channel:
             raise CommsError(f"could not open a DM with {email}")
-        await slack.chat_postMessage(channel=channel, text=body)
+        await slack.chat_postMessage(channel=channel, text=to_slack_mrkdwn(body))
     except SlackApiError as exc:
         code = (exc.response or {}).get("error", "")
         raise CommsError(f"Slack DM to {email} failed: {code or 'unknown error'}") from exc

@@ -22,14 +22,16 @@ from recruitment_db.models import Employee
 class FakeCominty:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.started = "started!"
+        self.continued = "continued!"
 
     async def start_thread(self, message: str, *, name=None):
         self.calls.append(("start", message, name))
-        return "thr_1", "started!"
+        return "thr_1", self.started
 
     async def send_message(self, thread_id: str, message: str):
         self.calls.append(("send", thread_id, message))
-        return "continued!"
+        return self.continued
 
     async def aclose(self) -> None:
         pass
@@ -119,6 +121,28 @@ def test_follow_up_uses_thread(client: TestClient, runtime) -> None:
     _post(client, _dm_event("ev1"))
     _post(client, _dm_event("ev2", text="again"))
     assert runtime.cominty.calls == [("start", "hi", "slack:U_HM"), ("send", "thr_1", "again")]
+
+
+def test_hm_reply_converts_markdown(client: TestClient, runtime) -> None:
+    runtime.cominty.started = "Job **posted** — see [board](https://x/y)"
+    _post(client, _dm_event("ev20"))
+    assert runtime.slack.posts == [{"channel": "D1", "text": "Job *posted* — see <https://x/y|board>"}]
+
+
+async def test_interviewer_reply_converts_markdown(client: TestClient, runtime) -> None:
+    from app.services.conversation import record_scheduler_thread
+
+    async with runtime.session_factory() as session:
+        await record_scheduler_thread(
+            session,
+            slack_user_id="U_IV",
+            application_id="a1",
+            stage_id="s9",
+            cominty_thread_id="thr_coord",
+        )
+    runtime.scheduler.continued = "## Slots\n- **Tue** 10am"
+    _post(client, _dm_event("ev21", user="U_IV", text="hi"))
+    assert runtime.slack.posts == [{"channel": "D1", "text": "*Slots*\n• *Tue* 10am"}]
 
 
 def test_non_hm_ignored(client: TestClient, runtime) -> None:
