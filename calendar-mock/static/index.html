@@ -33,7 +33,6 @@
   .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.85rem; flex-shrink: 0; }
   .acct .meta { overflow: hidden; }
   .acct .meta b { display: block; font-weight: 500; }
-  .acct .meta span { color: var(--muted); font-size: 0.8rem; }
   #login-form { margin-top: 1rem; }
   #login-form input { width: 100%; padding: 0.65rem 0.75rem; font-size: 1rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 0.6rem; }
   #login-form input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
@@ -113,7 +112,7 @@
     <div id="accts"></div>
     <p id="no-accts" class="hint" hidden>No interviewer accounts found.</p>
     <div id="login-form">
-      <input id="email" type="email" placeholder="Email" autocomplete="username">
+      <input id="email" type="hidden" autocomplete="username">
       <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
       <button id="signin">Sign in</button>
       <div id="login-err"></div>
@@ -183,7 +182,11 @@ const dkey = (d) => d.toISOString().slice(0, 10);
 
 /* ---------- login ---------- */
 async function loadAccounts() {
-  const data = await (await fetch("/api/interviewers")).json();
+  let data = {interviewers: []};
+  try {
+    data = await (await fetch("/api/interviewers")).json();
+  } catch { /* fall through to manual entry below */ }
+  if (!data.interviewers.length) document.getElementById("email").type = "email";
   const box = document.getElementById("accts");
   box.innerHTML = "";
   document.getElementById("no-accts").hidden = data.interviewers.length > 0;
@@ -191,9 +194,8 @@ async function loadAccounts() {
     const b = document.createElement("button");
     b.className = "acct";
     b.type = "button";
-    b.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="meta"><b></b><span></span></span>`;
+    b.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="meta"><b></b></span>`;
     b.querySelector("b").textContent = p.name;
-    b.querySelector("span span").textContent = p.email;
     b.onclick = () => {
       document.getElementById("email").value = p.email;
       document.querySelectorAll(".acct").forEach((el) => el.classList.remove("selected"));
@@ -208,7 +210,8 @@ async function signIn() {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("pw").value;
   const err = document.getElementById("login-err");
-  if (!email || !password) { err.textContent = "Enter your email and password."; return; }
+  const manual = document.getElementById("email").type !== "hidden";
+  if (!email || !password) { err.textContent = manual ? "Enter your email and password." : "Select your account above and enter your password."; return; }
   const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({email, password})});
   if (!r.ok) {

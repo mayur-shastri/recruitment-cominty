@@ -51,6 +51,9 @@ def test_index_serves_html(client: TestClient) -> None:
     assert 'id="signin"' in resp.text
     assert ">Sign in<" in resp.text
     assert 'id="email"' in resp.text
+    # Emails stay out of the UI: picker shows names only, login email is hidden.
+    assert 'id="email" type="hidden"' in resp.text
+    assert "textContent = p.email" not in resp.text
 
 
 def test_login_and_me_round_trip(client: TestClient) -> None:
