@@ -77,8 +77,14 @@ async def lifespan(app: FastAPI):
             user_id=settings.cominty_user_id,
             timeout=settings.cominty_timeout_s,
         )
-        # Scheduler toolset is finalized with the agent milestone; it needs
-        # ATS (interviews) and DB (plans) at minimum, so it starts there.
+        # Scheduler toolset: ATS (interviews) + DB (plans) + calendar
+        # (availability/booking). Empty connection IDs drop out until Cominty
+        # registration lands.
+        scheduler_connections = [
+            c
+            for c in [*assessment_connections, settings.cominty_calendar_connection_id]
+            if c
+        ]
         scheduler_client = AsyncCominty(
             api_token=settings.cominty_api_key,
             user_id=settings.cominty_user_id,
@@ -105,7 +111,7 @@ async def lifespan(app: FastAPI):
                 scheduler_client,
                 agent_id=settings.cominty_scheduler_agent_id,
                 thread_capabilities=AgentCapabilities(
-                    mcp=McpCapability(activation="always", connections=assessment_connections),
+                    mcp=McpCapability(activation="always", connections=scheduler_connections),
                 ),
             ),
             scheduler_agent_id=settings.cominty_scheduler_agent_id,

@@ -1,0 +1,32 @@
+# AcmeTech mock interviewer calendar.
+# NOTE: this service is intentionally NOT pip-installed (flat layout:
+# server.py runs from source). Install its runtime deps explicitly:
+#     pip install -r calendar-mock/requirements.txt
+# Plus the shared models, from the repo root:
+#     pip install -e ./db
+# Floors verified against the installed SDK (mcp 2.3.0; v1 API differs).
+[project]
+name = "acmetech-calendar-mock"
+version = "0.1.0"
+description = "AcmeTech mock interviewer calendar: demo UI plus scheduler MCP tools."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.3",
+    "fastapi>=0.115",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "pydantic-settings>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "aiosqlite>=0.19",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

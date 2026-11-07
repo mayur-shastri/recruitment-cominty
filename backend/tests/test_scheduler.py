@@ -52,6 +52,9 @@ def test_message_carries_contract() -> None:
     assert "cand@test.com" in message
     assert "R1 Interview [2026-11-20..2026-11-27] pool: Asha" in message
     assert "at-least-once" in message
+    assert "get_availability" in message
+    assert "book_interview" in message
+    assert "event key" in message
 
 
 def test_message_notes_gaps() -> None:

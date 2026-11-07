@@ -63,7 +63,10 @@ def build_schedule_message(
         "Match the stage to a plan round by name; confirm with the Hiring Manager "
         "when ambiguous. Before acting, list the application's existing Harly "
         "interviews — if one already covers this stage, do nothing (this trigger "
-        "is at-least-once)."
+        "is at-least-once). Otherwise check interviewer availability with "
+        "get_availability on the calendar connection and book with "
+        "book_interview inside a free gap, passing this trigger event ID as "
+        "the event key."
     )
 
 

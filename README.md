@@ -10,6 +10,7 @@ remains the ATS system of record.
 - `db/` — shared Postgres layer (`recruitment_db` package: models, engine, URL helper)
 - `ats-mcp/` — ATS MCP server (Milestone 2)
 - `db-mcp/` — scores MCP server (assessment storage)
+- `calendar-mock/` — mock interviewer calendar (demo UI + scheduler MCP tools)
 - `database/migrations/` — Alembic migrations (lands with backend foundation)
 - `docs/` — reference material dropped in from external docs
 

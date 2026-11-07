@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # Scheduler trigger (M3.6). Empty means "not configured": interview-stage
     # triggers refuse with a clear error instead of failing the receiver.
     cominty_scheduler_agent_id: str = ""
+    # Mock calendar MCP connection for the scheduler's availability tools.
+    cominty_calendar_connection_id: str = ""
     # Polling fallback: sweep unscored applications every interval (Harly
     # webhooks are broken upstream). Disable to rely on webhooks alone.
     assessment_poll_enabled: bool = True

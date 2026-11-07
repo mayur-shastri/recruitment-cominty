@@ -1,0 +1,25 @@
+# Mock interviewer calendar (demo UI + scheduler MCP tools).
+# Joins the EXISTING shared proxy network - never another Caddy.
+# Shared proxy network (verified via VPS inspection; see docs/vps-deploy.md).
+services:
+  recruitment-calendar:
+    build:
+      context: ..
+      dockerfile: calendar-mock/Dockerfile
+    container_name: recruitment-calendar
+    restart: unless-stopped
+    expose:
+      - "8004"
+    environment:
+      CALENDAR_HOST: "0.0.0.0" # 127.0.0.1 would be unreachable from Caddy
+      CALENDAR_PORT: "8004"
+      LOG_LEVEL: INFO
+    env_file:
+      - ../.env
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: harly_default
