@@ -446,6 +446,127 @@ async def test_sweep_harly_list_failure(factory, monkeypatch) -> None:
     assert result["reason"] == "harly list failed"
 
 
+def _stage_sweep_reads(**overrides):
+    base = {
+        "application": {"id": "a1", "jobId": "j1", "candidateId": "c1", "currentStageId": "s9"},
+        "stages": [{"id": "s9", "kind": "interview", "name": "R1 Interview"}],
+        "candidate": {"id": "c1", "email": "cand@test.com"},
+        "pages": [[{"id": "a1", "jobId": "j1", "currentStageId": "s9"}]],
+    }
+    base.update(overrides)
+    return FakeReads(
+        base["application"],
+        [],
+        base["stages"],
+        candidate=base["candidate"],
+        pages=base["pages"],
+    )
+
+
+async def _trigger_rows(factory):
+    from recruitment_db.models import SchedulerTrigger
+
+    async with factory() as session:
+        return (await session.execute(select(SchedulerTrigger))).scalars().all()
+
+
+async def test_stage_sweep_triggers_new_interview_app(factory, monkeypatch) -> None:
+    runtime = _runtime(factory)
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _stage_sweep_reads())
+    result = await pipeline.sweep_stage_changes(runtime)
+    assert result["status"] == "ok"
+    assert result["triggered"] == 1
+    assert result["skipped_processed"] == 0
+    [(message, name)] = runtime.scheduler.calls
+    assert name == "schedule-a1-s9"
+    assert "sweep:a1:s9" in message
+    rows = await _trigger_rows(factory)
+    assert [(r.application_id, r.stage_id) for r in rows] == [("a1", "s9")]
+
+
+async def test_stage_sweep_skips_processed(factory, monkeypatch) -> None:
+    from recruitment_db.models import SchedulerTrigger
+
+    async with _runtime(factory).session_factory() as session:
+        session.add(
+            SchedulerTrigger(application_id="a1", stage_id="s9", cominty_thread_id="thr_old")
+        )
+        await session.commit()
+    runtime = _runtime(factory)
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _stage_sweep_reads())
+    result = await pipeline.sweep_stage_changes(runtime)
+    assert result["status"] == "ok"
+    assert result["triggered"] == 0
+    assert result["skipped_processed"] == 1
+    assert runtime.scheduler.calls == []
+
+
+async def test_stage_sweep_skips_non_interview(factory, monkeypatch) -> None:
+    reads = _stage_sweep_reads(stages=[{"id": "s9", "kind": "screen", "name": "Screen"}])
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: reads)
+    result = await pipeline.sweep_stage_changes(_runtime(factory))
+    assert result["status"] == "ok"
+    assert result["triggered"] == 0
+    assert result["skipped_not_interview"] == 1
+
+
+async def test_stage_sweep_skips_unconfigured(factory, monkeypatch) -> None:
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _stage_sweep_reads())
+    result = await pipeline.sweep_stage_changes(_runtime(factory, scheduler_agent_id=""))
+    assert result["status"] == "skipped"
+
+
+async def test_stage_sweep_harly_failure(factory, monkeypatch) -> None:
+    monkeypatch.setattr(
+        pipeline, "HarlyReads", lambda *a, **k: FakeReads({}, [], [], error=HarlyReadError("down"))
+    )
+    result = await pipeline.sweep_stage_changes(_runtime(factory))
+    assert result["status"] == "error"
+
+
+async def test_new_application_skips_scored(factory, monkeypatch) -> None:
+    from recruitment_db.models import ApplicationScore
+
+    async with _runtime(factory).session_factory() as session:
+        session.add(
+            ApplicationScore(
+                application_id="a1",
+                job_id="j1",
+                candidate_id="c1",
+                total_score=80.0,
+                breakdown=[],
+                criteria_version=1,
+            )
+        )
+        await session.commit()
+    runtime = _runtime(factory)
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    result = await pipeline.process_new_application(runtime, "a1")
+    assert result["status"] == "skipped"
+    assert result["reason"] == "already scored"
+    assert runtime.assessment.calls == []
+
+
+async def test_poll_loop_runs_both_sweeps(factory, monkeypatch) -> None:
+    calls: list = []
+
+    async def fake_sweep(runtime, **kwargs):
+        calls.append(1)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(pipeline, "sweep_unscored_applications", fake_sweep)
+    monkeypatch.setattr(pipeline, "sweep_stage_changes", fake_sweep)
+    task = asyncio.create_task(pipeline.run_poll_loop(_runtime(factory), interval_s=3600))
+    for _ in range(200):
+        if len(calls) >= 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(calls) >= 2
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 async def test_poll_loop_runs_until_cancelled(factory, monkeypatch) -> None:
     calls: list = []
 
@@ -453,7 +574,11 @@ async def test_poll_loop_runs_until_cancelled(factory, monkeypatch) -> None:
         calls.append(1)
         return {"status": "ok"}
 
+    async def fake_stage(runtime):
+        return {"status": "ok"}
+
     monkeypatch.setattr(pipeline, "sweep_unscored_applications", fake_sweep)
+    monkeypatch.setattr(pipeline, "sweep_stage_changes", fake_stage)
     task = asyncio.create_task(pipeline.run_poll_loop(_runtime(factory), interval_s=3600))
     for _ in range(200):
         if calls:
@@ -474,7 +599,11 @@ async def test_poll_loop_survives_sweep_errors(factory, monkeypatch) -> None:
             raise RuntimeError("boom")
         return {"status": "ok"}
 
+    async def fake_stage(runtime):
+        return {"status": "ok"}
+
     monkeypatch.setattr(pipeline, "sweep_unscored_applications", flaky)
+    monkeypatch.setattr(pipeline, "sweep_stage_changes", fake_stage)
     task = asyncio.create_task(pipeline.run_poll_loop(_runtime(factory), interval_s=0.01))
     try:
         for _ in range(200):

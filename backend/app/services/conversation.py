@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from recruitment_db.models import ConversationThread, Employee, SchedulerThread
+from recruitment_db.models import ConversationThread, Employee, SchedulerThread, SchedulerTrigger
 
 MIN_HM_GRADE = 7  # hiring managers are employees with grade *above* this
 
@@ -60,6 +60,37 @@ async def record_scheduler_thread(
     )
     session.add(row)
     await session.commit()
+    return row
+
+
+async def get_scheduler_trigger(
+    session: AsyncSession, application_id: str, stage_id: str
+) -> SchedulerTrigger | None:
+    return (
+        await session.execute(
+            select(SchedulerTrigger).where(
+                SchedulerTrigger.application_id == application_id,
+                SchedulerTrigger.stage_id == stage_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def record_scheduler_trigger(
+    session: AsyncSession, *, application_id: str, stage_id: str, cominty_thread_id: str
+) -> SchedulerTrigger:
+    """Mark (application, stage) triggered; on a race, return the winner's row."""
+    row = SchedulerTrigger(
+        application_id=application_id, stage_id=stage_id, cominty_thread_id=cominty_thread_id
+    )
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        existing = await get_scheduler_trigger(session, application_id, stage_id)
+        assert existing is not None  # the conflicting row must exist
+        return existing
     return row
 
 

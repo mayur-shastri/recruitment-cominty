@@ -17,13 +17,18 @@ from sqlalchemy import select
 from app.integrations.harly.client import HarlyReadError, HarlyReads
 from app.services import resumes
 from app.services.assessment import trigger_assessment
-from app.services.conversation import record_scheduler_thread
+from app.services.conversation import (
+    get_scheduler_trigger,
+    record_scheduler_thread,
+    record_scheduler_trigger,
+)
 from app.services.interviewer_comms import CommsError, resolve_slack_id
 from app.services.scheduler import trigger_scheduler
 from recruitment_db.models import (
     ApplicationResume,
     ApplicationScore,
     JobInterviewConfig,
+    SchedulerTrigger,
     ScoringCriteria,
 )
 
@@ -107,6 +112,10 @@ async def _resolve_resume_url(
 
 async def process_new_application(runtime, application_id: str) -> dict[str, Any]:
     """Resolve the resume URL (best effort), then trigger the scoring agent."""
+    async with runtime.session_factory() as session:
+        if await session.get(ApplicationScore, application_id) is not None:
+            logger.info("skipping scoring for %s: already scored", application_id)
+            return {"status": "skipped", "reason": "already scored"}
     reads = HarlyReads(runtime.harly_base_url, runtime.harly_api_key)
     application = await reads.get_application(application_id)
     candidate_id = application.get("candidateId")
@@ -164,6 +173,10 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         return {"status": "ignored", "kind": kind}
     if not job_id or not candidate_id or not stage_id:
         raise HarlyReadError(f"application {application_id} missing job/candidate/stage")
+    async with runtime.session_factory() as session:
+        if await get_scheduler_trigger(session, application_id, stage_id) is not None:
+            logger.info("scheduler already triggered for %s @ %s; ignoring", application_id, stage_id)
+            return {"status": "ignored", "reason": "already triggered"}
 
     candidate_email: str | None = None
     try:
@@ -194,16 +207,21 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         interview_plan=interview_plan,
         unreachable=unreachable,
     )
-    if resolved:
-        async with runtime.session_factory() as session:
-            for email, slack_user_id in resolved.items():
-                await record_scheduler_thread(
-                    session,
-                    slack_user_id=slack_user_id,
-                    application_id=application_id,
-                    stage_id=stage_id,
-                    cominty_thread_id=thread_id,
-                )
+    async with runtime.session_factory() as session:
+        for email, slack_user_id in resolved.items():
+            await record_scheduler_thread(
+                session,
+                slack_user_id=slack_user_id,
+                application_id=application_id,
+                stage_id=stage_id,
+                cominty_thread_id=thread_id,
+            )
+        await record_scheduler_trigger(
+            session,
+            application_id=application_id,
+            stage_id=stage_id,
+            cominty_thread_id=thread_id,
+        )
     logger.info("scheduler triggered for %s @ %s: %.80s", application_id, stage_id, reply)
     return {
         "status": "scheduler_triggered",
@@ -359,11 +377,107 @@ async def sweep_unscored_applications(
     return {"status": "ok", **counts}
 
 
+async def sweep_stage_changes(
+    runtime, *, max_pages: int = POLL_MAX_PAGES, page_size: int = POLL_PAGE_SIZE
+) -> dict[str, Any]:
+    """Poll fallback for stage_changed webhooks (broken upstream).
+
+    Triggers the scheduler once per (application, interview stage):
+    scheduler_triggers rows mark processed pairs, so only new entries
+    fire. Per-application failures are isolated; a dead Harly skips.
+    """
+    counts: dict[str, Any] = {
+        "checked": 0,
+        "interview": 0,
+        "triggered": 0,
+        "skipped_processed": 0,
+        "skipped_not_interview": 0,
+        "failed": 0,
+    }
+    if not runtime.scheduler_agent_id:
+        logger.warning("stage poll skipped: scheduler agent not configured")
+        return {"status": "skipped", "reason": "no scheduler agent", **counts}
+    try:
+        reads = HarlyReads(runtime.harly_base_url, runtime.harly_api_key)
+    except HarlyReadError:
+        logger.warning("stage poll skipped: harly api not configured")
+        return {"status": "skipped", "reason": "harly not configured", **counts}
+    try:
+        apps: list[dict[str, Any]] = []
+        cursor: str | None = None
+        for _ in range(max_pages):
+            page, cursor = await reads.list_applications(limit=page_size, cursor=cursor)
+            apps.extend(page)
+            if not cursor:
+                break
+    except HarlyReadError:
+        logger.exception("stage poll: harly list failed; retrying next sweep")
+        return {"status": "error", "reason": "harly list failed", **counts}
+
+    pairs = [(a.get("id"), a.get("jobId")) for a in apps]
+    pairs = [(str(i), str(j)) for i, j in pairs if i and j]
+    if not pairs:
+        logger.info("stage poll: no applications seen")
+        return {"status": "ok", **counts}
+    async with runtime.session_factory() as session:
+        processed = {
+            (r.application_id, r.stage_id)
+            for r in (
+                await session.execute(
+                    select(SchedulerTrigger).where(
+                        SchedulerTrigger.application_id.in_([i for i, _ in pairs])
+                    )
+                )
+            ).scalars()
+        }
+    kinds: dict[str, dict[str, str]] = {}
+    for app_id, job_id in pairs:
+        counts["checked"] += 1
+        try:
+            application = await reads.get_application(app_id)
+            stage_id = application.get("currentStageId")
+            if not stage_id:
+                continue
+            if job_id not in kinds:
+                kinds[job_id] = {
+                    str(s.get("id")): str(s.get("kind"))
+                    for s in await reads.list_job_stages(job_id)
+                    if s.get("id")
+                }
+            if kinds[job_id].get(str(stage_id)) != "interview":
+                counts["skipped_not_interview"] += 1
+                continue
+            counts["interview"] += 1
+            if (app_id, str(stage_id)) in processed:
+                counts["skipped_processed"] += 1
+                continue
+            await process_stage_change(
+                runtime, {"applicationId": app_id}, event_id=f"sweep:{app_id}:{stage_id}"
+            )
+        except Exception:
+            logger.exception("stage poll: trigger failed for %s", app_id)
+            counts["failed"] += 1
+            continue
+        processed.add((app_id, str(stage_id)))
+        counts["triggered"] += 1
+    logger.info(
+        "stage poll: checked=%d interview=%d triggered=%d processed=%d not_interview=%d failed=%d",
+        counts["checked"],
+        counts["interview"],
+        counts["triggered"],
+        counts["skipped_processed"],
+        counts["skipped_not_interview"],
+        counts["failed"],
+    )
+    return {"status": "ok", **counts}
+
+
 async def run_poll_loop(runtime, *, interval_s: float) -> None:
     """Sweep immediately, then every interval; only cancellation stops it."""
     while True:
-        try:
-            await sweep_unscored_applications(runtime)
-        except Exception:
-            logger.exception("assessment poll sweep failed; retrying in %ss", interval_s)
+        for sweep in (sweep_unscored_applications, sweep_stage_changes):
+            try:
+                await sweep(runtime)
+            except Exception:
+                logger.exception("poll sweep %s failed; retrying in %ss", sweep.__name__, interval_s)
         await asyncio.sleep(interval_s)

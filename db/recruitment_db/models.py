@@ -151,6 +151,24 @@ class SchedulerThread(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class SchedulerTrigger(Base):
+    """Fired scheduler triggers: exactly one thread per (application, stage).
+
+    Written after a successful trigger (webhook or sweep path alike), so
+    retries still fire but replays and cross-path duplicates do not.
+    Re-entry into a stage after leaving it is ignored (known limitation).
+    """
+
+    __tablename__ = "scheduler_triggers"
+    __table_args__ = (UniqueConstraint("application_id", "stage_id", name="uq_scheduler_triggers_app_stage"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    application_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    stage_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    cominty_thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class CalendarEvent(Base):
     """Busy blocks (personal) and interview bookings (agent) per interviewer.
 
