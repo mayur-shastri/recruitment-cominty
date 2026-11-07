@@ -32,7 +32,7 @@ from services.booking import BookingStore, get_booking_store  # noqa: E402
 INTERVIEWERS = [
     ("mayur2k03+asha@gmail.com", "Asha Patel", "asha123"),
     ("shastrimayur2993+ravi@gmail.com", "Ravi Kumar", "ravi123"),
-    ("mayur2k03+mei@gmail.com", "Mei Chen", "mei123"),
+    ("wilson69966996+mei@gmail.com", "Mei Chen", "mei123"),
 ]
 
 # Per-interviewer weekday blocks: weekday (0=Mon) -> [(start, end, title)].
@@ -60,7 +60,7 @@ PATTERNS = {
         3: [("09:00", "10:00", "Hiring sync"), ("12:00", "13:00", "Lunch"), ("13:00", "17:00", "Customer onsite")],
         4: [("10:00", "11:00", "Team demo"), ("12:00", "13:00", "Lunch")],
     },
-    "mayur2k03+mei@gmail.com": {
+    "wilson69966996+mei@gmail.com": {
         0: [("09:00", "10:00", "Sprint planning"), ("11:00", "12:00", "Design review"),
             ("12:00", "13:00", "Lunch"), ("15:00", "16:00", "1:1 with Asha")],
         1: [("09:00", "09:30", "Standup"), ("12:00", "13:00", "Lunch"), ("14:00", "15:00", "Portfolio review")],
