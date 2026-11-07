@@ -288,11 +288,13 @@ def register_tools(mcp: Any, profile: str = "all") -> None:
             "and limit 1-100 (default 10). Returns the highest-scoring "
             "applications ordered by total descending, each with application "
             "and candidate IDs, total, breakdown, rationale, criteria "
-            "version, and resume_url (null when no resume is on file). "
+            "version, resume_url (null when no resume is on file), and ats_url "
+            "(Harly candidate page; null when unconfigured). "
             "Unscored applications never appear here — say so when "
             "the list is short. Enrich names via get_application/get_candidate "
             "on the ATS connection, present rank plus total plus one line of "
             "rationale each, link each candidate's name to their resume_url "
+            "with an 'open in Harly' link to ats_url "
             "(never paste bare application IDs), and offer move/reject next steps.",
             list_top_applications,
         ),

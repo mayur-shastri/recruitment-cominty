@@ -177,6 +177,25 @@ async def test_list_top_includes_resume_url(store: ScoresStore) -> None:
     assert by_app["a1"]["resume_url"] is None
 
 
+async def test_list_top_includes_ats_url(store: ScoresStore, tmp_path) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path}/scores.db"
+    frontend = ScoresStore(url, harly_frontend_url="https://harly.test/")
+    try:
+        await store.save_score(
+            application_id="a1",
+            job_id="j1",
+            candidate_id="c9",
+            total_score=80.0,
+            breakdown=[{"label": "Go", "score": 80}],
+            criteria_version=2,
+        )
+        result = await frontend.list_top("j1", 10)
+        assert result["scores"][0]["ats_url"] == "https://harly.test/dashboard/candidates/c9"
+        assert (await store.list_top("j1", 10))["scores"][0]["ats_url"] is None
+    finally:
+        await frontend.aclose()
+
+
 async def test_save_and_get_interview_config_round_trip(store: ScoresStore) -> None:
     rounds = [
         {
@@ -228,7 +247,10 @@ async def test_get_scores_store_normalizes_libpq_url(monkeypatch) -> None:
     monkeypatch.setattr(
         scores_module,
         "get_db_mcp_settings",
-        lambda: SimpleNamespace(database_url="postgresql://u:p@h/db?sslmode=require"),
+        lambda: SimpleNamespace(
+            database_url="postgresql://u:p@h/db?sslmode=require",
+            harly_frontend_url="",
+        ),
     )
     store = scores_module.get_scores_store()
     try:

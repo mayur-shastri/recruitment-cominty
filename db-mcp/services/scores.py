@@ -38,7 +38,8 @@ def _is_postgres(url: str) -> bool:
 class ScoresStore:
     """Score/criteria reads and writes over one short-lived engine."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, *, harly_frontend_url: str = "") -> None:
+        self._harly_frontend_url = (harly_frontend_url or "").rstrip("/")
         connect_args: dict[str, Any] = {}
         if _is_postgres(database_url):
             # Supabase pooler is pgbouncer (transaction mode): server-side prepared
@@ -182,6 +183,11 @@ class ScoresStore:
                     resume_urls = {app_id: url for app_id, url in resume_rows}
                 for entry in scores:
                     entry["resume_url"] = resume_urls.get(entry["application_id"])
+                    entry["ats_url"] = (
+                        f"{self._harly_frontend_url}/dashboard/candidates/{entry['candidate_id']}"
+                        if self._harly_frontend_url
+                        else None
+                    )
                 return {"job_id": job_id, "scores": scores}
         except SQLAlchemyError as exc:
             raise ScoresError("score store request failed") from exc
@@ -256,4 +262,4 @@ def get_scores_store() -> ScoresStore:
         # .env carries a libpq-style URL; the async engine needs the
         # asyncpg driver or SQLAlchemy reaches for psycopg (not installed).
         url = to_async_database_url(url)
-    return ScoresStore(database_url=url)
+    return ScoresStore(database_url=url, harly_frontend_url=settings.harly_frontend_url)
