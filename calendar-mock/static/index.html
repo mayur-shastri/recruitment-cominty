@@ -3,124 +3,352 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AcmeTech Mock Calendar</title>
+<title>AcmeTech Calendar</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-  h1 { font-size: 1.4rem; }
-  #login button, #weeknav button { margin: 0.25rem; padding: 0.4rem 0.8rem; cursor: pointer; }
-  .day { border-top: 1px solid #ccc; padding: 0.5rem 0; }
-  .day h3 { margin: 0.2rem 0; font-size: 1rem; }
-  .evt { margin: 0.2rem 0; padding: 0.3rem 0.5rem; border-radius: 4px; font-size: 0.9rem; }
-  .busy { background: #eee; color: #555; }
-  .interview { background: #d6e9ff; color: #0b3d91; }
-  #addbusy { margin-top: 1rem; border-top: 1px solid #ccc; padding-top: 1rem; }
-  #addbusy input { margin: 0.2rem; }
-  .hint { color: #666; font-size: 0.85rem; }
+  :root {
+    --blue: #1a73e8;
+    --blue-dark: #1765cc;
+    --ink: #202124;
+    --muted: #5f6368;
+    --line: #dadce0;
+    --bg: #f1f3f4;
+    --card: #ffffff;
+    --event-blue-bg: #d2e3fc;
+    --event-blue-fg: #0b57d0;
+    --event-gray-bg: #e8eaed;
+    --event-gray-fg: #444746;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; margin: 0; color: var(--ink); background: var(--bg); }
+  [hidden] { display: none !important; }
+
+  /* ---------- login ---------- */
+  #login-view { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+  .login-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 2.5rem 2.5rem 2rem; width: 400px; box-shadow: 0 1px 3px rgba(60,64,67,.15); }
+  .login-card h1 { font-size: 1.35rem; font-weight: 500; margin: 0 0 0.25rem; }
+  .login-card p.sub { color: var(--muted); font-size: 0.9rem; margin: 0 0 1.5rem; }
+  .acct { display: flex; align-items: center; gap: 0.75rem; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 0.55rem 0.6rem; cursor: pointer; font-size: 0.92rem; }
+  .acct:hover { background: #f6fafe; }
+  .acct.selected { border-color: var(--blue); background: #f6fafe; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.85rem; flex-shrink: 0; }
+  .acct .meta { overflow: hidden; }
+  .acct .meta b { display: block; font-weight: 500; }
+  .acct .meta span { color: var(--muted); font-size: 0.8rem; }
+  #pw-row { margin-top: 1rem; }
+  #pw-row input { width: 100%; padding: 0.65rem 0.75rem; font-size: 1rem; border: 1px solid var(--line); border-radius: 6px; }
+  #pw-row input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+  #signin { margin-top: 1rem; width: 100%; padding: 0.65rem; font-size: 0.95rem; font-weight: 600; color: #fff; background: var(--blue); border: none; border-radius: 6px; cursor: pointer; }
+  #signin:hover { background: var(--blue-dark); }
+  #login-err { color: #b3261e; font-size: 0.85rem; margin-top: 0.6rem; min-height: 1.2em; }
+
+  /* ---------- app header ---------- */
+  header { display: flex; align-items: center; gap: 0.6rem; background: var(--card); border-bottom: 1px solid var(--line); padding: 0.55rem 1rem; position: sticky; top: 0; z-index: 20; }
+  header .logo { width: 34px; height: 34px; border-radius: 8px; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1rem; }
+  header h1 { font-size: 1.15rem; font-weight: 500; margin: 0 1rem 0 0; }
+  .hbtn { border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.88rem; cursor: pointer; color: var(--ink); }
+  .hbtn:hover { background: #f6fafe; }
+  #month-label { font-size: 1.05rem; margin-left: 0.5rem; }
+  .spacer { flex: 1; }
+  #user-chip { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; color: var(--muted); }
+  #user-chip .avatar { width: 30px; height: 30px; font-size: 0.75rem; }
+  #logout { border: none; background: none; color: var(--blue); cursor: pointer; font-size: 0.88rem; }
+  #tz-note { font-size: 0.78rem; color: var(--muted); }
+
+  /* ---------- week grid ---------- */
+  #week-wrap { background: var(--card); margin: 1rem; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  #day-head { display: grid; grid-template-columns: 64px repeat(7, 1fr); border-bottom: 1px solid var(--line); }
+  #day-head .corner { border-right: 1px solid var(--line); }
+  .day-h { text-align: center; padding: 0.5rem 0 0.6rem; border-right: 1px solid var(--line); }
+  .day-h:last-child { border-right: none; }
+  .day-h .dow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
+  .day-h .num { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; font-size: 1.15rem; margin-top: 0.15rem; }
+  .day-h.today .num { background: var(--blue); color: #fff; }
+  .day-h.today .dow { color: var(--blue); }
+  #week-body { display: grid; grid-template-columns: 64px repeat(7, 1fr); position: relative; }
+  #gutter { border-right: 1px solid var(--line); position: relative; }
+  .glabel { position: absolute; right: 6px; transform: translateY(-50%); font-size: 0.7rem; color: var(--muted); }
+  .day-col { position: relative; border-right: 1px solid var(--line); background: repeating-linear-gradient(to bottom, transparent 0 51px, var(--line) 51px 52px); }
+  .day-col:last-child { border-right: none; }
+  .evt { position: absolute; left: 4px; right: 4px; border-radius: 6px; padding: 2px 6px; font-size: 0.76rem; line-height: 1.25; overflow: hidden; cursor: pointer; border: none; text-align: left; }
+  .evt b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .evt span { opacity: 0.85; }
+  .evt.busy { background: var(--event-gray-bg); color: var(--event-gray-fg); }
+  .evt.interview { background: var(--event-blue-bg); color: var(--event-blue-fg); }
+  .evt:hover { filter: brightness(0.96); }
+  #now-line { position: absolute; left: 64px; right: 0; height: 2px; background: #ea4335; z-index: 5; pointer-events: none; }
+  #now-line::before { content: ""; position: absolute; left: -5px; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: #ea4335; }
+
+  /* ---------- modal + popover ---------- */
+  .overlay { position: fixed; inset: 0; background: rgba(32,33,36,.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+  .dialog { background: var(--card); border-radius: 12px; padding: 1.5rem; width: 360px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  .dialog h2 { font-size: 1.05rem; font-weight: 500; margin: 0 0 1rem; }
+  .dialog label { display: block; font-size: 0.82rem; color: var(--muted); margin: 0.6rem 0 0.2rem; }
+  .dialog input { width: 100%; padding: 0.5rem 0.6rem; font-size: 0.95rem; border: 1px solid var(--line); border-radius: 6px; }
+  .dialog .row { display: flex; gap: 0.6rem; }
+  .dialog .row > div { flex: 1; }
+  .dialog .actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.2rem; }
+  .btn-primary { background: var(--blue); color: #fff; border: none; border-radius: 6px; padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+  .btn-primary:hover { background: var(--blue-dark); }
+  .btn-ghost { background: none; border: none; color: var(--blue); font-size: 0.9rem; font-weight: 600; cursor: pointer; padding: 0.55rem 0.8rem; }
+  #dlg-err { color: #b3261e; font-size: 0.84rem; margin-top: 0.6rem; min-height: 1.1em; }
+  #pop { position: fixed; z-index: 60; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.22); padding: 1rem 1.1rem; width: 300px; }
+  #pop h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+  #pop .kind { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 4px; padding: 0.1rem 0.4rem; margin-bottom: 0.5rem; }
+  #pop .kind.busy { background: var(--event-gray-bg); color: var(--event-gray-fg); }
+  #pop .kind.interview { background: var(--event-blue-bg); color: var(--event-blue-fg); }
+  #pop p { margin: 0.25rem 0; font-size: 0.86rem; color: var(--muted); }
+  #pop .close { position: absolute; top: 0.4rem; right: 0.6rem; border: none; background: none; font-size: 1.1rem; cursor: pointer; color: var(--muted); }
+  #fab { position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 30; background: var(--blue); color: #fff; border: none; border-radius: 24px; padding: 0.8rem 1.3rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(26,115,232,.45); }
+  #fab:hover { background: var(--blue-dark); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<h1>AcmeTech Mock Calendar (demo)</h1>
-<div id="login"><span class="hint">Log in as interviewer:</span> <span id="who"></span></div>
-<div id="weeknav" hidden>
-  <button id="prev">← prev week</button>
-  <strong id="weeklabel"></strong>
-  <button id="next">next week →</button>
+
+<div id="login-view">
+  <div class="login-card">
+    <h1>AcmeTech Calendar</h1>
+    <p class="sub">Sign in as an interviewer to view your calendar</p>
+    <div id="accts"></div>
+    <div id="pw-row" hidden>
+      <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="signin">Sign in</button>
+      <div id="login-err"></div>
+    </div>
+  </div>
 </div>
-<div id="week"></div>
-<div id="addbusy" hidden>
-  <h3>Add a busy block</h3>
-  <label>date <input id="bdate" type="date"></label>
-  <label>start <input id="bstart" type="time" value="09:00"></label>
-  <label>end <input id="bend" type="time" value="10:00"></label>
-  <label>title <input id="btitle" type="text" value="Focus time"></label>
-  <button id="badd">Add</button>
-  <p class="hint">All times UTC. Busy blocks change what the scheduler agent can book.</p>
+
+<div id="app-view" hidden>
+  <header>
+    <div class="logo">A</div>
+    <h1>Calendar</h1>
+    <button class="hbtn" id="today">Today</button>
+    <button class="hbtn" id="prev">‹</button>
+    <button class="hbtn" id="next">›</button>
+    <span id="month-label"></span>
+    <span class="spacer"></span>
+    <span id="tz-note">All times UTC</span>
+    <span id="user-chip"><span class="avatar" id="user-av">?</span><span id="user-name"></span></span>
+    <button id="logout">Sign out</button>
+  </header>
+  <div id="week-wrap">
+    <div id="day-head"><div class="corner"></div></div>
+    <div id="week-body"><div id="gutter"></div></div>
+  </div>
+  <button id="fab">+ Block time</button>
 </div>
+
+<div id="modal" class="overlay" hidden>
+  <div class="dialog">
+    <h2>Block time</h2>
+    <label>Title</label>
+    <input id="m-title" type="text" value="Focus time">
+    <label>Date</label>
+    <input id="m-date" type="date">
+    <div class="row">
+      <div><label>Start</label><input id="m-start" type="time" value="09:00"></div>
+      <div><label>End</label><input id="m-end" type="time" value="10:00"></div>
+    </div>
+    <div id="dlg-err"></div>
+    <div class="actions">
+      <button class="btn-ghost" id="m-cancel">Cancel</button>
+      <button class="btn-primary" id="m-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="pop" hidden>
+  <button class="close" id="pop-x">×</button>
+  <h3 id="pop-title"></h3>
+  <span class="kind" id="pop-kind"></span>
+  <p id="pop-when"></p>
+  <p id="pop-app"></p>
+</div>
+
 <script>
-let me = null;
-let weekStart = monday(new Date());
+const DAY_MS = 86400000, HOUR_PX = 52, DAY_START_H = 8, DAY_END_H = 19;
+let me = null, weekStart = monday(new Date()), pickedEmail = null;
 
 function monday(d) {
   const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dow = (x.getUTCDay() + 6) % 7;
-  x.setUTCDate(x.getUTCDate() - dow);
+  x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7));
   return x;
 }
-function iso(d) { return d.toISOString(); }
-function fmt(isoStr) {
-  const d = new Date(isoStr);
-  return d.toISOString().slice(11, 16);
-}
+const initials = (n) => n.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+const hm = (iso) => iso.slice(11, 16);
+const dkey = (d) => d.toISOString().slice(0, 10);
 
-async function refreshMe() {
-  const r = await fetch("/api/me");
-  me = r.ok ? await r.json() : null;
-  document.getElementById("who").textContent = me ? me.name + " <" + me.email + ">" : "(not logged in)";
-  document.getElementById("weeknav").hidden = !me;
-  document.getElementById("addbusy").hidden = !me;
-}
-
-async function loadInterviewers() {
-  const r = await fetch("/api/interviewers");
-  const data = await r.json();
-  const box = document.getElementById("login");
+/* ---------- login ---------- */
+async function loadAccounts() {
+  const data = await (await fetch("/api/interviewers")).json();
+  const box = document.getElementById("accts");
+  box.innerHTML = "";
   data.interviewers.forEach((p) => {
     const b = document.createElement("button");
-    b.textContent = p.name;
-    b.onclick = async () => {
-      await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({email: p.email})});
-      await refreshMe();
-      await loadWeek();
+    b.className = "acct";
+    b.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="meta"><b></b><span></span></span>`;
+    b.querySelector("b").textContent = p.name;
+    b.querySelector("span span").textContent = p.email;
+    b.onclick = () => {
+      pickedEmail = p.email;
+      document.querySelectorAll(".acct").forEach((el) => el.classList.remove("selected"));
+      b.classList.add("selected");
+      document.getElementById("pw-row").hidden = false;
+      document.getElementById("login-err").textContent = "";
+      document.getElementById("pw").focus();
     };
     box.appendChild(b);
   });
 }
-
-async function loadWeek() {
-  if (!me) return;
-  const start = new Date(weekStart);
-  const end = new Date(weekStart); end.setUTCDate(end.getUTCDate() + 7);
-  document.getElementById("weeklabel").textContent =
-    start.toISOString().slice(0, 10) + " .. " + new Date(end - 1).toISOString().slice(0, 10) + " (UTC)";
-  const q = new URLSearchParams({interviewer_email: me.email, start: iso(start), end: iso(end)});
-  const r = await fetch("/api/availability?" + q);
-  const data = await r.json();
-  const byDay = {};
-  (data.events || []).forEach((e) => {
-    const day = e.starts_at.slice(0, 10);
-    (byDay[day] = byDay[day] || []).push(e);
-  });
-  const week = document.getElementById("week");
-  week.innerHTML = "";
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(start); d.setUTCDate(d.getUTCDate() + i);
-    const key = d.toISOString().slice(0, 10);
-    const div = document.createElement("div");
-    div.className = "day";
-    const evts = (byDay[key] || []).map((e) =>
-      `<div class="evt ${e.kind}">${fmt(e.starts_at)}–${fmt(e.ends_at)} · ${e.kind} · ${e.title || ""}</div>`
-    ).join("") || `<div class="hint">free</div>`;
-    div.innerHTML = `<h3>${key}</h3>${evts}`;
-    week.appendChild(div);
+async function signIn() {
+  if (!pickedEmail) return;
+  const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: pickedEmail, password: document.getElementById("pw").value})});
+  if (!r.ok) {
+    const detail = ((await r.json()).detail || "Sign-in failed").toLowerCase();
+    document.getElementById("login-err").textContent = detail.charAt(0).toUpperCase() + detail.slice(1);
+    return;
   }
+  me = await r.json();
+  enterApp();
+}
+document.getElementById("signin").onclick = signIn;
+document.getElementById("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
+document.getElementById("logout").onclick = () => location.reload();
+
+function enterApp() {
+  document.getElementById("login-view").hidden = true;
+  document.getElementById("app-view").hidden = false;
+  document.getElementById("user-av").textContent = initials(me.name);
+  document.getElementById("user-name").textContent = me.name;
+  buildGutter();
+  loadWeek();
 }
 
-document.getElementById("prev").onclick = async () => { weekStart.setUTCDate(weekStart.getUTCDate() - 7); await loadWeek(); };
-document.getElementById("next").onclick = async () => { weekStart.setUTCDate(weekStart.getUTCDate() + 7); await loadWeek(); };
-document.getElementById("badd").onclick = async () => {
-  const d = document.getElementById("bdate").value;
-  if (!d) { alert("pick a date"); return; }
+/* ---------- week grid ---------- */
+const DOWS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function buildGutter() {
+  const g = document.getElementById("gutter");
+  g.innerHTML = "";
+  g.style.height = (DAY_END_H - DAY_START_H) * HOUR_PX + "px";
+  for (let h = DAY_START_H; h < DAY_END_H; h++) {
+    const s = document.createElement("span");
+    s.className = "glabel";
+    s.style.top = (h - DAY_START_H) * HOUR_PX + "px";
+    s.textContent = h + ":00";
+    g.appendChild(s);
+  }
+}
+function renderHead() {
+  const head = document.getElementById("day-head");
+  head.querySelectorAll(".day-h").forEach((el) => el.remove());
+  const today = dkey(new Date());
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart.getTime() + i * DAY_MS);
+    const div = document.createElement("div");
+    div.className = "day-h" + (dkey(d) === today ? " today" : "");
+    div.innerHTML = `<div class="dow">${DOWS[i]}</div><div class="num">${d.getUTCDate()}</div>`;
+    head.appendChild(div);
+  }
+  const opts = {month: "long", year: "numeric", timeZone: "UTC"};
+  document.getElementById("month-label").textContent =
+    weekStart.toLocaleDateString("en-US", opts);
+}
+async function loadWeek() {
+  renderHead();
+  const start = weekStart, end = new Date(weekStart.getTime() + 7 * DAY_MS);
+  const q = new URLSearchParams({interviewer_email: me.email, start: start.toISOString(), end: end.toISOString()});
+  const data = await (await fetch("/api/availability?" + q)).json();
+  const byDay = {};
+  (data.events || []).forEach((e) => { (byDay[e.starts_at.slice(0, 10)] = byDay[e.starts_at.slice(0, 10)] || []).push(e); });
+  const body = document.getElementById("week-body");
+  body.querySelectorAll(".day-col, #now-line").forEach((el) => el.remove());
+  for (let i = 0; i < 7; i++) {
+    const col = document.createElement("div");
+    col.className = "day-col";
+    col.style.height = (DAY_END_H - DAY_START_H) * HOUR_PX + "px";
+    (byDay[dkey(new Date(weekStart.getTime() + i * DAY_MS))] || []).forEach((e) => {
+      const s = new Date(e.starts_at), t = new Date(e.ends_at);
+      const top = ((s.getUTCHours() * 60 + s.getUTCMinutes()) / 60 - DAY_START_H) * HOUR_PX;
+      const hgt = Math.max(20, (t - s) / 3600000 * HOUR_PX - 3);
+      const b = document.createElement("button");
+      b.className = "evt " + e.kind;
+      b.style.top = Math.max(0, top) + "px";
+      b.style.height = hgt + "px";
+      b.innerHTML = "<b></b><span></span>";
+      b.querySelector("b").textContent = e.title || "(no title)";
+      b.querySelector("span").textContent = hm(e.starts_at) + "–" + hm(e.ends_at);
+      b.onclick = (ev) => { ev.stopPropagation(); showPop(e, ev.clientX, ev.clientY); };
+      col.appendChild(b);
+    });
+    body.appendChild(col);
+  }
+  drawNowLine();
+}
+function drawNowLine() {
+  const now = new Date();
+  const dayIdx = Math.floor((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - weekStart.getTime()) / DAY_MS);
+  if (dayIdx < 0 || dayIdx > 6) return;
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const top = (mins / 60 - DAY_START_H) * HOUR_PX;
+  if (top < 0 || top > (DAY_END_H - DAY_START_H) * HOUR_PX) return;
+  const cols = document.querySelectorAll(".day-col");
+  const line = document.createElement("div");
+  line.id = "now-line";
+  line.style.top = (document.getElementById("day-head").offsetHeight + top) + "px";
+  document.getElementById("week-wrap").appendChild(line);
+  void cols;
+}
+document.getElementById("prev").onclick = () => { weekStart = new Date(weekStart.getTime() - 7 * DAY_MS); loadWeek(); };
+document.getElementById("next").onclick = () => { weekStart = new Date(weekStart.getTime() + 7 * DAY_MS); loadWeek(); };
+document.getElementById("today").onclick = () => { weekStart = monday(new Date()); loadWeek(); };
+
+/* ---------- event popover ---------- */
+function showPop(e, x, y) {
+  document.getElementById("pop-title").textContent = e.title || "(no title)";
+  const k = document.getElementById("pop-kind");
+  k.textContent = e.kind === "interview" ? "Interview" : "Busy";
+  k.className = "kind " + e.kind;
+  const d = new Date(e.starts_at);
+  document.getElementById("pop-when").textContent =
+    d.toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric", timeZone: "UTC"}) +
+    " · " + hm(e.starts_at) + "–" + hm(e.ends_at) + " UTC";
+  document.getElementById("pop-app").textContent = e.application_id ? "Application " + e.application_id : "";
+  const pop = document.getElementById("pop");
+  pop.hidden = false;
+  pop.style.left = Math.min(x, window.innerWidth - 320) + "px";
+  pop.style.top = Math.min(y + 8, window.innerHeight - 180) + "px";
+}
+document.getElementById("pop-x").onclick = () => { document.getElementById("pop").hidden = true; };
+document.addEventListener("click", () => { document.getElementById("pop").hidden = true; });
+
+/* ---------- block-time modal ---------- */
+const modal = document.getElementById("modal");
+document.getElementById("fab").onclick = () => {
+  document.getElementById("m-date").value = dkey(new Date());
+  document.getElementById("dlg-err").textContent = "";
+  modal.hidden = false;
+};
+document.getElementById("m-cancel").onclick = () => { modal.hidden = true; };
+document.getElementById("m-save").onclick = async () => {
+  const d = document.getElementById("m-date").value;
+  if (!d) { document.getElementById("dlg-err").textContent = "Pick a date."; return; }
   const body = {
-    starts_at: `${d}T${document.getElementById("bstart").value}:00+00:00`,
-    ends_at: `${d}T${document.getElementById("bend").value}:00+00:00`,
-    title: document.getElementById("btitle").value,
+    starts_at: `${d}T${document.getElementById("m-start").value}:00+00:00`,
+    ends_at: `${d}T${document.getElementById("m-end").value}:00+00:00`,
+    title: document.getElementById("m-title").value,
   };
   const r = await fetch("/api/busy", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (!r.ok) { alert("could not add: " + (await r.json()).detail); return; }
-  await loadWeek();
+  if (!r.ok) { document.getElementById("dlg-err").textContent = (await r.json()).detail; return; }
+  modal.hidden = true;
+  loadWeek();
 };
 
-(async () => { await loadInterviewers(); await refreshMe(); await loadWeek(); })();
+(async () => {
+  await loadAccounts();
+  const r = await fetch("/api/me");
+  if (r.ok) { me = await r.json(); enterApp(); }
+})();
 </script>
 </body>
 </html>

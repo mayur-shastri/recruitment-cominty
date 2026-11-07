@@ -32,7 +32,7 @@ async def client(tmp_path, monkeypatch):
     await engine.dispose()
     store = BookingStore(url)
     async with store._session() as session:
-        session.add(Interviewer(email="asha@acme.tech", name="Asha"))
+        session.add(Interviewer(email="asha@acme.tech", name="Asha", password="asha123"))
         await session.commit()
     monkeypatch.setattr(ui, "get_booking_store", lambda: store)
     try:
@@ -51,14 +51,22 @@ def test_index_serves_html(client: TestClient) -> None:
 
 def test_login_and_me_round_trip(client: TestClient) -> None:
     assert client.get("/api/me").status_code == 401
-    resp = client.post("/api/login", json={"email": "asha@acme.tech"})
+    resp = client.post("/api/login", json={"email": "asha@acme.tech", "password": "asha123"})
     assert resp.status_code == 200
     assert resp.json() == {"email": "asha@acme.tech", "name": "Asha"}
     assert client.get("/api/me").json()["email"] == "asha@acme.tech"
 
 
-def test_login_unknown_interviewer(client: TestClient) -> None:
-    assert client.post("/api/login", json={"email": "ghost@acme.tech"}).status_code == 404
+def test_login_rejects_bad_credentials(client: TestClient) -> None:
+    assert (
+        client.post("/api/login", json={"email": "asha@acme.tech", "password": "wrong"}).status_code
+        == 401
+    )
+    assert (
+        client.post("/api/login", json={"email": "ghost@acme.tech", "password": "x"}).status_code
+        == 401
+    )
+    assert client.post("/api/login", json={"email": "asha@acme.tech"}).status_code == 400
 
 
 def test_busy_block_requires_login(client: TestClient) -> None:
@@ -74,7 +82,7 @@ def test_busy_block_requires_login(client: TestClient) -> None:
 
 
 def test_busy_block_round_trip_and_overlap(client: TestClient) -> None:
-    client.post("/api/login", json={"email": "asha@acme.tech"})
+    client.post("/api/login", json={"email": "asha@acme.tech", "password": "asha123"})
     payload = {
         "starts_at": "2026-11-20T09:00:00+00:00",
         "ends_at": "2026-11-20T10:00:00+00:00",
@@ -88,7 +96,7 @@ def test_busy_block_round_trip_and_overlap(client: TestClient) -> None:
 
 
 def test_availability_endpoint(client: TestClient) -> None:
-    client.post("/api/login", json={"email": "asha@acme.tech"})
+    client.post("/api/login", json={"email": "asha@acme.tech", "password": "asha123"})
     client.post(
         "/api/busy",
         json={

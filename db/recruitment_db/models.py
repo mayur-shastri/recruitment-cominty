@@ -131,6 +131,9 @@ class Interviewer(Base):
 
     email: Mapped[str] = mapped_column(String(320), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Plaintext demo password (direct compare). Mock accounts only — never
+    # a pattern for real users.
+    password: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

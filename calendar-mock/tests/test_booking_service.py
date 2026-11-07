@@ -47,7 +47,7 @@ async def store(tmp_path):
 
 async def _seed_interviewer(store: BookingStore, email: str = "asha@acme.tech") -> None:
     async with store._session() as session:
-        session.add(Interviewer(email=email, name="Asha"))
+        session.add(Interviewer(email=email, name="Asha", password="asha123"))
         await session.commit()
 
 
@@ -174,10 +174,22 @@ async def test_get_availability_unknown_email(store: BookingStore) -> None:
 async def test_seed_is_idempotent(store: BookingStore) -> None:
     import seed as seed_module
 
+    expected = sum(len(slots) for days in seed_module.PATTERNS.values() for slots in days.values())
     first = await seed_module.seed(store)
     second = await seed_module.seed(store)
-    assert first == second == {"interviewers": 3, "blocks": 40}
+    assert first == second == {"interviewers": 3, "blocks": expected}
+    assert expected > 40  # a full-feeling week with gaps left for agent bookings
     assert len((await store.list_interviewers())["interviewers"]) == 3
+
+
+async def test_verify_interviewer(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    ok = await store.verify_interviewer("asha@acme.tech", "asha123")
+    assert ok == {"email": "asha@acme.tech", "name": "Asha"}
+    with pytest.raises(BookingNotFoundError, match="invalid email or password"):
+        await store.verify_interviewer("asha@acme.tech", "wrong")
+    with pytest.raises(BookingNotFoundError, match="invalid email or password"):
+        await store.verify_interviewer("ghost@acme.tech", "x")
 
 
 async def test_get_booking_store_normalizes_libpq_url(monkeypatch) -> None:
