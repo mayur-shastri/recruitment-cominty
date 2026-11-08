@@ -21,6 +21,7 @@ from app.services.conversation import (
     is_hiring_manager,
     record_thread,
 )
+from app.services.interviewer_comms import describe_slack_user
 from app.services.slack_format import to_slack_mrkdwn
 
 logger = logging.getLogger(__name__)
@@ -159,9 +160,14 @@ async def _handle_interviewer_reply(
     if coord is None:
         logger.info("ignoring slack DM from %s: no open coordination", user)
         return
+    # Shared threads mix several interviewers: label the speaker, mirroring the
+    # candidate-email path, or the agent cannot attribute replies.
+    who = await describe_slack_user(session, user)
     try:
         async with get_app_lock(coord.application_id):
-            reply = await runtime.scheduler.send_message(coord.cominty_thread_id, text)
+            reply = await runtime.scheduler.send_message(
+                coord.cominty_thread_id, f"{who} replied by Slack:\n\n{text}"
+            )
     except ComintyServiceError as exc:
         logger.exception("scheduler follow-up failed (transient=%s)", exc.transient)
         reply = "Sorry — I couldn't reach the scheduling agent just now. Please try again in a bit."

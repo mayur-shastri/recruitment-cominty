@@ -154,6 +154,7 @@ def test_non_hm_ignored(client: TestClient, runtime) -> None:
 
 async def test_interviewer_reply_routes_to_coordination(client: TestClient, runtime) -> None:
     from app.services.conversation import record_scheduler_thread
+    from recruitment_db.models import Interviewer
 
     async with runtime.session_factory() as session:
         await record_scheduler_thread(
@@ -163,10 +164,35 @@ async def test_interviewer_reply_routes_to_coordination(client: TestClient, runt
             stage_id="s9",
             cominty_thread_id="thr_coord",
         )
+        session.add(
+            Interviewer(
+                email="ravi@test.dev", name="Ravi Kumar", password="x", slack_user_id="U_IV"
+            )
+        )
+        await session.commit()
     _post(client, _dm_event("ev10", user="U_IV", text="Tue works for me"))
     assert runtime.cominty.calls == []
-    assert runtime.scheduler.calls == [("send", "thr_coord", "Tue works for me")]
+    assert runtime.scheduler.calls == [
+        ("send", "thr_coord", "Ravi Kumar <ravi@test.dev> replied by Slack:\n\nTue works for me")
+    ]
     assert runtime.slack.posts == [{"channel": "D1", "text": "continued!"}]
+
+
+async def test_interviewer_reply_unknown_speaker_falls_back(client: TestClient, runtime) -> None:
+    from app.services.conversation import record_scheduler_thread
+
+    async with runtime.session_factory() as session:
+        await record_scheduler_thread(
+            session,
+            slack_user_id="U_STRANGER",
+            application_id="a1",
+            stage_id="s9",
+            cominty_thread_id="thr_coord",
+        )
+    _post(client, _dm_event("ev11", user="U_STRANGER", text="hi"))
+    assert runtime.scheduler.calls == [
+        ("send", "thr_coord", "Slack user U_STRANGER replied by Slack:\n\nhi")
+    ]
 
 
 async def test_interviewer_reply_failure_posts_error(client: TestClient, runtime) -> None:
