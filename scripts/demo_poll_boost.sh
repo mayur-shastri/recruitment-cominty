@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Demo poll booster: temporarily speed up the assessment/stage sweep.
 #
-#   ./scripts/demo_poll_boost.sh           # boost to 20s, auto-restore after 10 min
+#   ./scripts/demo_poll_boost.sh           # boost to 20s, auto-restore after 1 hour
 #   BOOST_INTERVAL_S=10 BOOST_DURATION_S=120 ./scripts/demo_poll_boost.sh
 #   ./scripts/demo_poll_boost.sh --restore  # bail out early: restore + recreate now
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 INTERVAL="${BOOST_INTERVAL_S:-20}"
-DURATION="${BOOST_DURATION_S:-600}"
+DURATION="${BOOST_DURATION_S:-3600}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT/.env"
 LOCK_FILE="/tmp/demo_poll_boost.lock"
