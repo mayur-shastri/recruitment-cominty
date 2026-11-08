@@ -10,6 +10,7 @@ the DM (needs `im:write`; falls back to a direct post without it).
 from __future__ import annotations
 
 from slack_sdk.errors import SlackApiError
+from sqlalchemy import select
 
 from app.services.slack_format import to_slack_mrkdwn
 from recruitment_db.models import Interviewer
@@ -26,6 +27,16 @@ async def resolve_stored_slack_id(session_factory, email: str) -> str | None:
     async with session_factory() as session:
         row = await session.get(Interviewer, email)
         return row.slack_user_id if row and row.slack_user_id else None
+
+
+async def describe_slack_user(session, user_id: str) -> str:
+    """Speaker label for an inbound DM ('Ravi Kumar <email>'), else the raw ID."""
+    row = (
+        await session.execute(select(Interviewer).where(Interviewer.slack_user_id == user_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return f"Slack user {user_id}"
+    return f"{row.name} <{row.email}>"
 
 
 def _truncate(text: str) -> str:
