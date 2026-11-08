@@ -10,14 +10,16 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
+from datetime import timezone
 from typing import Any
 
 from sqlalchemy import select
 
-from recruitment_db.models import CandidateThread, SchedulerTrigger
+from recruitment_db.models import CalendarEvent, CandidateThread, SchedulerTrigger
 
 _REPLY_PREFIX = "sched-"
 _STRIP_TAGS = re.compile(r"<[^>]+>")
+_UTC = timezone.utc
 # The trigger row lands just after the run starts; the agent's first send can
 # theoretically beat the commit, so poll briefly before reporting it missing.
 _TRIGGER_RETRIES = 5
@@ -48,6 +50,48 @@ def extract_reply_text(email: dict[str, Any]) -> str:
         return text
     html = email.get("html") or ""
     return _STRIP_TAGS.sub("", html).replace("&nbsp;", " ").strip()
+
+
+def _format_when(starts_at) -> str:
+    # SQLite drops tzinfo on read; every writer stores UTC-aware values.
+    if getattr(starts_at, "tzinfo", None) is None:
+        starts_at = starts_at.replace(tzinfo=_UTC)
+    return starts_at.astimezone(_UTC).strftime("%b %d, %H:%M UTC")
+
+
+def append_interview_links(text: str, interviews: list) -> str:
+    """Append join links for booked interviews (deduped, skips sent ones).
+
+    Panel rows share one room, so group by link; links the agent already
+    pasted stay untouched. No interviews (or nothing new) returns text as-is.
+    """
+    fresh: dict[str, str] = {}
+    for row in interviews:
+        url = row.meeting_url
+        if not url or url in text or url in fresh:
+            continue
+        label = row.title or "Interview"
+        fresh[url] = f"{label} — {_format_when(row.starts_at)}: {url}"
+    if not fresh:
+        return text
+    lines = "\n".join(fresh.values())
+    return f"{text.rstrip()}\n\nJoin your interview here:\n{lines}"
+
+
+async def interviews_for_application(session_factory, application_id: str) -> list:
+    """Booked interviews with links for one application, earliest first."""
+    async with session_factory() as session:
+        return (
+            await session.execute(
+                select(CalendarEvent)
+                .where(
+                    CalendarEvent.kind == "interview",
+                    CalendarEvent.application_id == application_id,
+                    CalendarEvent.meeting_url.is_not(None),
+                )
+                .order_by(CalendarEvent.starts_at)
+            )
+        ).scalars().all()
 
 
 async def send_candidate_email(
@@ -88,11 +132,12 @@ async def send_candidate_email(
     thread_id = trigger.cominty_thread_id
     token = secrets.token_urlsafe(9)
     reply_to = build_reply_to(token, domain)
+    interviews = await interviews_for_application(session_factory, application_id)
     email_id = await resend.send_email(
         from_email=from_email,
         to_email=to_email,
         subject=subject,
-        text=text,
+        text=append_interview_links(text, interviews),
         reply_to=reply_to,
     )
     async with session_factory() as session:

@@ -54,6 +54,9 @@ def test_index_serves_html(client: TestClient) -> None:
     # Emails stay out of the UI: picker shows names only, login email is hidden.
     assert 'id="email" type="hidden"' in resp.text
     assert "textContent = p.email" not in resp.text
+    # Interview blocks surface their meeting link on hover and in the popover.
+    assert 'id="pop-meet"' in resp.text
+    assert "meeting_url" in resp.text
 
 
 def test_login_and_me_round_trip(client: TestClient) -> None:

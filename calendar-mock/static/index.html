@@ -97,6 +97,8 @@
   #pop .kind.busy { background: var(--event-gray-bg); color: var(--event-gray-fg); }
   #pop .kind.interview { background: var(--event-blue-bg); color: var(--event-blue-fg); }
   #pop p { margin: 0.25rem 0; font-size: 0.86rem; color: var(--muted); }
+  #pop-meet a { color: var(--blue); text-decoration: none; overflow-wrap: break-word; }
+  #pop-meet a:hover { text-decoration: underline; }
   #pop .close { position: absolute; top: 0.4rem; right: 0.6rem; border: none; background: none; font-size: 1.1rem; cursor: pointer; color: var(--muted); }
   #fab { position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 30; background: var(--blue); color: #fff; border: none; border-radius: 24px; padding: 0.8rem 1.3rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(26,115,232,.45); }
   #fab:hover { background: var(--blue-dark); }
@@ -165,6 +167,7 @@
   <span class="kind" id="pop-kind"></span>
   <p id="pop-when"></p>
   <p id="pop-app"></p>
+  <p id="pop-meet" hidden>Join: <a id="pop-link" target="_blank" rel="noopener"></a></p>
 </div>
 
 <script>
@@ -289,6 +292,7 @@ async function loadWeek() {
       b.innerHTML = "<b></b><span></span>";
       b.querySelector("b").textContent = e.title || "(no title)";
       b.querySelector("span").textContent = hm(e.starts_at) + "–" + hm(e.ends_at);
+      if (e.kind === "interview" && e.meeting_url) b.title = "Join: " + e.meeting_url;
       b.onclick = (ev) => { ev.stopPropagation(); showPop(e, ev.clientX, ev.clientY); };
       col.appendChild(b);
     });
@@ -325,6 +329,17 @@ function showPop(e, x, y) {
     d.toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric", timeZone: "UTC"}) +
     " · " + hm(e.starts_at) + "–" + hm(e.ends_at) + " UTC";
   document.getElementById("pop-app").textContent = e.application_id ? "Application " + e.application_id : "";
+  const meet = document.getElementById("pop-meet");
+  const link = document.getElementById("pop-link");
+  if (e.kind === "interview" && e.meeting_url) {
+    link.href = e.meeting_url;
+    link.textContent = e.meeting_url;
+    meet.hidden = false;
+  } else {
+    link.removeAttribute("href");
+    link.textContent = "";
+    meet.hidden = true;
+  }
   const pop = document.getElementById("pop");
   pop.hidden = false;
   pop.style.left = Math.min(x, window.innerWidth - 320) + "px";
