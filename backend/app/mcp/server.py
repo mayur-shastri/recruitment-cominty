@@ -47,7 +47,9 @@ def create_comms_mcp() -> MCPServer:
             "dates, times, and timezone), application_id, stage_id. Each "
             "send gets a unique reply-to, so the candidate's replies route "
             "back into this thread automatically — invite a reply with what "
-            "works. A coordination for the application+stage must already "
+            "works. Booked interview links for the application are appended "
+            "automatically, so don't paste or invent meeting URLs yourself. "
+            "A coordination for the application+stage must already "
             "exist (the trigger creates it); fails loudly otherwise."
         ),
     )(send_email)

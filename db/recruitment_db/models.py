@@ -213,4 +213,7 @@ class CalendarEvent(Base):
     application_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     event_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    # Fake video-meeting link, set at booking for interviews (panel rows for
+    # one slot share it); busy blocks leave it NULL.
+    meeting_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

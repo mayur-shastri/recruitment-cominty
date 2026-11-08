@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from recruitment_db.database import Base
-from recruitment_db.models import CandidateThread, SchedulerTrigger
+from recruitment_db.models import CalendarEvent, CandidateThread, SchedulerTrigger
 from app.services.candidate_comms import (
     CandidateCommsError,
     build_reply_to,
@@ -93,6 +93,104 @@ async def test_send_records_thread(factory) -> None:
         ).scalar_one()
         assert (row.application_id, row.stage_id, row.cominty_thread_id) == ("a1", "s9", "thr_1")
     assert resend.sends[0]["reply_to"] == result["reply_to"]
+
+
+async def _seed_trigger(factory, app: str = "a1", stage: str = "s9") -> None:
+    async with factory() as session:
+        session.add(
+            SchedulerTrigger(application_id=app, stage_id=stage, cominty_thread_id="thr_1")
+        )
+        await session.commit()
+
+
+async def _send(factory, resend, text: str, app: str = "a1", stage: str = "s9"):
+    return await send_candidate_email(
+        resend,
+        factory,
+        from_email="Acme <sched@test.dev>",
+        domain="in.test.dev",
+        to_email="cand@test.com",
+        subject="R1",
+        text=text,
+        application_id=app,
+        stage_id=stage,
+    )
+
+
+async def test_send_appends_interview_link(factory) -> None:
+    from datetime import datetime, timezone
+
+    await _seed_trigger(factory)
+    async with factory() as session:
+        session.add(
+            CalendarEvent(
+                interviewer_email="asha@acme.tech",
+                starts_at=datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc),
+                ends_at=datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc),
+                kind="interview",
+                title="R1 screen",
+                application_id="a1",
+                meeting_url="https://meet.acmetech.com/abc-defg-hij",
+            )
+        )
+        await session.commit()
+    resend = FakeResend()
+    await _send(factory, resend, "See you then.")
+    sent = resend.sends[0]["text"]
+    assert sent.startswith("See you then.")
+    assert "https://meet.acmetech.com/abc-defg-hij" in sent
+
+
+async def test_send_without_interviews_leaves_text_unchanged(factory) -> None:
+    await _seed_trigger(factory)
+    resend = FakeResend()
+    await _send(factory, resend, "Tue or Wed?")
+    assert resend.sends[0]["text"] == "Tue or Wed?"
+
+
+async def test_send_skips_link_already_in_text(factory) -> None:
+    from datetime import datetime, timezone
+
+    await _seed_trigger(factory)
+    async with factory() as session:
+        session.add(
+            CalendarEvent(
+                interviewer_email="asha@acme.tech",
+                starts_at=datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc),
+                ends_at=datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc),
+                kind="interview",
+                title="R1 screen",
+                application_id="a1",
+                meeting_url="https://meet.acmetech.com/abc-defg-hij",
+            )
+        )
+        await session.commit()
+    resend = FakeResend()
+    await _send(factory, resend, "Join: https://meet.acmetech.com/abc-defg-hij")
+    assert resend.sends[0]["text"] == "Join: https://meet.acmetech.com/abc-defg-hij"
+
+
+async def test_send_panel_rows_yield_single_link(factory) -> None:
+    from datetime import datetime, timezone
+
+    await _seed_trigger(factory)
+    async with factory() as session:
+        for email in ("asha@acme.tech", "ravi@acme.tech"):
+            session.add(
+                CalendarEvent(
+                    interviewer_email=email,
+                    starts_at=datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc),
+                    ends_at=datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc),
+                    kind="interview",
+                    title="R2 panel",
+                    application_id="a1",
+                    meeting_url="https://meet.acmetech.com/abc-defg-hij",
+                )
+            )
+        await session.commit()
+    resend = FakeResend()
+    await _send(factory, resend, "See you then.")
+    assert resend.sends[0]["text"].count("https://meet.acmetech.com/abc-defg-hij") == 1
 
 
 async def test_send_requires_coordination(factory, monkeypatch) -> None:

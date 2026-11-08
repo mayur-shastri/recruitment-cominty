@@ -361,3 +361,70 @@ async def test_list_interviews_filters_application(store: BookingStore) -> None:
     assert [i["application_id"] for i in only_a1["interviews"]] == ["a1"]
     everything = await store.list_interviews()
     assert len(everything["interviews"]) == 2
+
+
+_MEET_RE = r"^https://meet\.acmetech\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}$"
+
+
+async def _book_meet(store: BookingStore, **overrides):
+    params = {
+        "interviewer_email": "asha@acme.tech",
+        "starts_at": _dt(20, 10),
+        "ends_at": _dt(20, 11),
+        "title": "R1 screen",
+        "event_key": "evt-meet-1",
+        "application_id": "a1",
+    }
+    params.update(overrides)
+    return await store.book_interview(**params)
+
+
+async def test_book_interview_assigns_meeting_url(store: BookingStore) -> None:
+    import re
+
+    await _seed_interviewer(store)
+    booked = await _book_meet(store)
+    assert re.match(_MEET_RE, booked["meeting_url"]), booked["meeting_url"]
+    listed = await store.list_interviews(application_id="a1")
+    assert listed["interviews"][0]["meeting_url"] == booked["meeting_url"]
+    avail = await store.get_availability(["asha@acme.tech"], _dt(20, 0), _dt(21, 0))
+    assert avail["availability"]["asha@acme.tech"][0]["meeting_url"] == booked["meeting_url"]
+
+
+async def test_book_interview_replay_keeps_meeting_url(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    first = await _book_meet(store)
+    second = await _book_meet(store)
+    assert second["meeting_url"] == first["meeting_url"]
+
+
+async def test_panel_bookings_share_meeting_url(store: BookingStore) -> None:
+    await _seed_interviewer(store, "asha@acme.tech")
+    await _seed_interviewer(store, "ravi@acme.tech")
+    first = await _book_meet(store, event_key="evt-panel-1")
+    second = await _book_meet(
+        store, interviewer_email="ravi@acme.tech", event_key="evt-panel-2"
+    )
+    assert second["meeting_url"] == first["meeting_url"]
+
+
+async def test_distinct_slots_get_distinct_meeting_urls(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    first = await _book_meet(store, event_key="evt-r1")
+    second = await _book_meet(store, event_key="evt-r2", starts_at=_dt(21, 10), ends_at=_dt(21, 11))
+    assert second["meeting_url"] != first["meeting_url"]
+
+
+async def test_update_interview_keeps_meeting_url(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    booked = await _book_meet(store)
+    moved = await store.update_interview(booked["id"], starts_at=_dt(21, 10), ends_at=_dt(21, 11))
+    assert moved["meeting_url"] == booked["meeting_url"]
+
+
+async def test_busy_block_has_no_meeting_url(store: BookingStore) -> None:
+    await _seed_interviewer(store)
+    block = await store.add_busy_block(
+        interviewer_email="asha@acme.tech", starts_at=_dt(20, 9), ends_at=_dt(20, 10), title="Focus"
+    )
+    assert block["meeting_url"] is None

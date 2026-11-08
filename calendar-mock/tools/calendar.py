@@ -219,7 +219,9 @@ def register_tools(mcp: Any) -> None:
             "event_key (the trigger event ID — replaying a key returns the "
             "original booking instead of double-booking). Optional: "
             "application_id, job_id. Overlapping bookings fail loudly — "
-            "pick another slot instead.",
+            "pick another slot instead. The booking carries a meeting_url "
+            "(panel rows for one slot share it); candidate emails get the "
+            "link appended automatically, so never invent a different one.",
             book_interview,
         ),
         (

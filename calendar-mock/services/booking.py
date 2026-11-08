@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from config import get_calendar_settings
+from recruitment_db.meetings import generate_meeting_url
 from recruitment_db.models import CalendarEvent, Interviewer
 from recruitment_db.urls import to_async_database_url
 
@@ -147,6 +148,7 @@ class BookingStore:
                 await self._reject_overlap(
                     session, interviewer_email=interviewer_email, starts_at=starts_at, ends_at=ends_at
                 )
+                meeting_url = await self._panel_meeting_url(session, application_id, starts_at)
                 row = CalendarEvent(
                     interviewer_email=interviewer_email,
                     starts_at=starts_at,
@@ -156,6 +158,7 @@ class BookingStore:
                     application_id=application_id,
                     job_id=job_id,
                     event_key=event_key,
+                    meeting_url=meeting_url or generate_meeting_url(),
                 )
                 session.add(row)
                 try:
@@ -405,7 +408,28 @@ class BookingStore:
             "application_id": row.application_id,
             "job_id": row.job_id,
             "event_key": row.event_key,
+            "meeting_url": row.meeting_url,
         }
+
+    @staticmethod
+    async def _panel_meeting_url(
+        session, application_id: str | None, starts_at: datetime
+    ) -> str | None:
+        """Link already issued for this application+slot (panel rows share one room)."""
+        if application_id is None:
+            return None
+        return (
+            await session.execute(
+                select(CalendarEvent.meeting_url)
+                .where(
+                    CalendarEvent.kind == "interview",
+                    CalendarEvent.application_id == application_id,
+                    CalendarEvent.starts_at == starts_at,
+                    CalendarEvent.meeting_url.is_not(None),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
 
 def get_booking_store() -> BookingStore:
