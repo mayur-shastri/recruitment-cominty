@@ -16,6 +16,7 @@ from app.integrations.resend.client import ResendClient
 from app.integrations.resend.verification import verify_resend_signature
 from app.services.candidate_comms import extract_reply_text, parse_reply_token
 from app.services.cominty import ComintyService
+from app.services.conversation import get_app_lock
 from recruitment_db.models import CandidateThread, ResendEvent
 
 logger = logging.getLogger(__name__)
@@ -110,14 +111,16 @@ async def _route_reply(runtime: ResendRuntime, data: dict) -> None:
             logger.info("ignoring resend mail: unknown coordination token")
             return
         thread_id, candidate_email = thread.cominty_thread_id, thread.candidate_email
+        application_id = thread.application_id
     email = await ResendClient(runtime.resend_api_key).get_received_email(email_id)
     text = extract_reply_text(email)
     if not text:
         logger.info("ignoring resend mail %s: empty body", email_id)
         return
-    reply = await runtime.scheduler.send_message(
-        thread_id, f"Candidate {candidate_email} replied by email:\n\n{text}"
-    )
+    async with get_app_lock(application_id):
+        reply = await runtime.scheduler.send_message(
+            thread_id, f"Candidate {candidate_email} replied by email:\n\n{text}"
+        )
     subject = email.get("subject") or "Interview scheduling"
     if not subject.lower().startswith("re:"):
         subject = f"Re: {subject}"
