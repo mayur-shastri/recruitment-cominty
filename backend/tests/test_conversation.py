@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.services.conversation import (
+    get_app_lock,
     get_open_scheduler_thread,
     get_scheduler_trigger,
     get_thread,
@@ -14,6 +15,7 @@ from app.services.conversation import (
     record_scheduler_thread,
     record_scheduler_trigger,
     record_thread,
+    supersede_app_threads,
 )
 from recruitment_db.database import Base
 from recruitment_db.models import Employee
@@ -87,3 +89,21 @@ async def test_scheduler_thread_latest_open_wins(session: AsyncSession) -> None:
     assert found is not None and found.cominty_thread_id == "thr_new"
     assert found.application_id == "a2"
     assert await get_open_scheduler_thread(session, "U_other") is None
+
+
+def test_app_lock_identity() -> None:
+    assert get_app_lock("a1") is get_app_lock("a1")
+    assert get_app_lock("a1") is not get_app_lock("a2")
+
+
+async def test_supersede_app_threads(session: AsyncSession) -> None:
+    await record_scheduler_thread(
+        session, slack_user_id="U9", application_id="a1", stage_id="s1", cominty_thread_id="thr_old"
+    )
+    await record_scheduler_thread(
+        session, slack_user_id="U9", application_id="a1", stage_id="s2", cominty_thread_id="thr_new"
+    )
+    assert await supersede_app_threads(session, application_id="a1", except_thread_id="thr_new") == 1
+    assert await supersede_app_threads(session, application_id="a1", except_thread_id="thr_new") == 0
+    found = await get_open_scheduler_thread(session, "U9")
+    assert found is not None and found.cominty_thread_id == "thr_new"

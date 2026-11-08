@@ -19,9 +19,11 @@ from app.services import resumes
 from app.services.assessment import trigger_assessment
 from app.services.conversation import (
     delete_scheduler_trigger,
+    get_app_lock,
     get_scheduler_trigger,
     record_scheduler_thread,
     record_scheduler_trigger,
+    supersede_app_threads,
 )
 from app.services.interviewer_comms import (
     CommsError,
@@ -179,68 +181,74 @@ async def process_stage_change(runtime, data: dict[str, Any], *, event_id: str) 
         return {"status": "ignored", "kind": kind}
     if not job_id or not candidate_id or not stage_id:
         raise HarlyReadError(f"application {application_id} missing job/candidate/stage")
-    async with runtime.session_factory() as session:
-        if await get_scheduler_trigger(session, application_id, stage_id) is not None:
-            logger.info("scheduler already triggered for %s @ %s; ignoring", application_id, stage_id)
-            return {"status": "ignored", "reason": "already triggered"}
-
-    candidate_email: str | None = None
-    try:
-        candidate = await reads.get_candidate(candidate_id)
-        email = candidate.get("email")
-        candidate_email = str(email).strip() if email else None
-    except Exception:
-        logger.warning("candidate email lookup failed for %s; scheduler gap noted", candidate_id)
-    interview_plan: list | None = None
-    try:
+    # One scheduler run per application at a time: a stage advance never
+    # overlaps an in-flight follow-up run for the same candidate.
+    async with get_app_lock(application_id):
         async with runtime.session_factory() as session:
-            row = await session.get(JobInterviewConfig, job_id)
-            interview_plan = list(row.rounds) if row is not None else None
-    except Exception:
-        logger.exception("interview plan lookup failed for job %s", job_id)
+            if await get_scheduler_trigger(session, application_id, stage_id) is not None:
+                logger.info("scheduler already triggered for %s @ %s; ignoring", application_id, stage_id)
+                return {"status": "ignored", "reason": "already triggered"}
 
-    resolved, unreachable = await _resolve_pool_members(runtime, interview_plan)
-    # Rows record before the reply lands: the agent acts (Slack DMs, candidate
-    # email) while the run is awaited, and those tools read these rows.
-    run = await start_scheduler_run(
-        runtime.scheduler,
-        agent_id=runtime.scheduler_agent_id,
-        event_id=event_id,
-        application_id=application_id,
-        job_id=job_id,
-        candidate_id=candidate_id,
-        candidate_email=candidate_email,
-        stage_id=stage_id,
-        stage_name=stage_name,
-        interview_plan=interview_plan,
-        unreachable=unreachable,
-    )
-    thread_id = str(run.thread.id)
-    async with runtime.session_factory() as session:
-        for email, slack_user_id in resolved.items():
-            await record_scheduler_thread(
+        candidate_email: str | None = None
+        try:
+            candidate = await reads.get_candidate(candidate_id)
+            email = candidate.get("email")
+            candidate_email = str(email).strip() if email else None
+        except Exception:
+            logger.warning("candidate email lookup failed for %s; scheduler gap noted", candidate_id)
+        interview_plan: list | None = None
+        try:
+            async with runtime.session_factory() as session:
+                row = await session.get(JobInterviewConfig, job_id)
+                interview_plan = list(row.rounds) if row is not None else None
+        except Exception:
+            logger.exception("interview plan lookup failed for job %s", job_id)
+
+        resolved, unreachable = await _resolve_pool_members(runtime, interview_plan)
+        # Rows record before the reply lands: the agent acts (Slack DMs, candidate
+        # email) while the run is awaited, and those tools read these rows.
+        run = await start_scheduler_run(
+            runtime.scheduler,
+            agent_id=runtime.scheduler_agent_id,
+            event_id=event_id,
+            application_id=application_id,
+            job_id=job_id,
+            candidate_id=candidate_id,
+            candidate_email=candidate_email,
+            stage_id=stage_id,
+            stage_name=stage_name,
+            interview_plan=interview_plan,
+            unreachable=unreachable,
+        )
+        thread_id = str(run.thread.id)
+        async with runtime.session_factory() as session:
+            for email, slack_user_id in resolved.items():
+                await record_scheduler_thread(
+                    session,
+                    slack_user_id=slack_user_id,
+                    application_id=application_id,
+                    stage_id=stage_id,
+                    cominty_thread_id=thread_id,
+                )
+            await record_scheduler_trigger(
                 session,
-                slack_user_id=slack_user_id,
                 application_id=application_id,
                 stage_id=stage_id,
                 cominty_thread_id=thread_id,
             )
-        await record_scheduler_trigger(
-            session,
-            application_id=application_id,
-            stage_id=stage_id,
-            cominty_thread_id=thread_id,
-        )
-    try:
-        reply = await run.text()
-    except Exception:
-        await delete_scheduler_trigger(
-            runtime.session_factory,
-            application_id=application_id,
-            stage_id=stage_id,
-            cominty_thread_id=thread_id,
-        )
-        raise
+            await supersede_app_threads(
+                session, application_id=application_id, except_thread_id=thread_id
+            )
+        try:
+            reply = await run.text()
+        except Exception:
+            await delete_scheduler_trigger(
+                runtime.session_factory,
+                application_id=application_id,
+                stage_id=stage_id,
+                cominty_thread_id=thread_id,
+            )
+            raise
     logger.info("scheduler triggered for %s @ %s: %.80s", application_id, stage_id, reply)
     return {
         "status": "scheduler_triggered",

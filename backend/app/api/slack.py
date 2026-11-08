@@ -15,6 +15,7 @@ from app.integrations.slack.verification import verify_slack_signature
 from recruitment_db.models import SlackEvent
 from app.services.cominty import ComintyService, ComintyServiceError
 from app.services.conversation import (
+    get_app_lock,
     get_open_scheduler_thread,
     get_thread,
     is_hiring_manager,
@@ -159,7 +160,8 @@ async def _handle_interviewer_reply(
         logger.info("ignoring slack DM from %s: no open coordination", user)
         return
     try:
-        reply = await runtime.scheduler.send_message(coord.cominty_thread_id, text)
+        async with get_app_lock(coord.application_id):
+            reply = await runtime.scheduler.send_message(coord.cominty_thread_id, text)
     except ComintyServiceError as exc:
         logger.exception("scheduler follow-up failed (transient=%s)", exc.transient)
         reply = "Sorry — I couldn't reach the scheduling agent just now. Please try again in a bit."

@@ -17,11 +17,11 @@ from recruitment_db.models import ApplicationResume, ApplicationScore, ScoringCr
 
 
 class FakeRun:
-    def __init__(self, owner) -> None:
+    def __init__(self, owner, thread_id: str = "thr_1") -> None:
         from types import SimpleNamespace
 
         self._owner = owner
-        self.thread = SimpleNamespace(id="thr_1")
+        self.thread = SimpleNamespace(id=thread_id)
 
     async def text(self) -> str:
         if self._owner.on_text is not None:
@@ -32,10 +32,11 @@ class FakeRun:
 
 
 class FakeCominty:
-    def __init__(self, *, text_error=None, on_text=None) -> None:
+    def __init__(self, *, text_error=None, on_text=None, thread_ids=None) -> None:
         self.calls: list = []
         self.text_error = text_error
         self.on_text = on_text
+        self._thread_ids = list(thread_ids) if thread_ids else ["thr_1"]
 
     async def start_thread(self, message: str, *, name=None):
         self.calls.append((message, name))
@@ -43,7 +44,8 @@ class FakeCominty:
 
     async def start_run(self, message: str, *, name=None):
         self.calls.append((message, name))
-        return FakeRun(self)
+        tid = self._thread_ids.pop(0) if len(self._thread_ids) > 1 else self._thread_ids[0]
+        return FakeRun(self, thread_id=tid)
 
     async def aclose(self) -> None:
         pass
@@ -355,6 +357,54 @@ async def test_stage_change_cleans_up_on_run_failure(factory, monkeypatch) -> No
     async with factory() as session:
         assert (await session.execute(select(SchedulerTrigger))).scalars().all() == []
     assert await _scheduler_rows(factory) == []
+
+
+async def test_concurrent_triggers_serialize_per_app(factory, monkeypatch) -> None:
+    await _seed_plan(factory)
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def during_run() -> None:
+        entered.set()
+        await gate.wait()
+
+    runtime = _runtime(factory, scheduler=FakeCominty(on_text=during_run))
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    t1 = asyncio.create_task(
+        pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e1")
+    )
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    t2 = asyncio.create_task(
+        pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e2")
+    )
+    await asyncio.sleep(0.2)
+    assert len(runtime.scheduler.calls) == 1  # second trigger queued behind the lock
+    gate.set()
+    r1, r2 = await t1, await t2
+    assert r1["status"] == "scheduler_triggered"
+    assert r2 == {"status": "ignored", "reason": "already triggered"}
+
+
+async def test_stage_advance_supersedes_prior_threads(factory, monkeypatch) -> None:
+    await _seed_plan(factory)
+    runtime = _runtime(factory, scheduler=FakeCominty(thread_ids=["thr_1", "thr_2"]))
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: _interview_reads())
+    r1 = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e1")
+    assert r1["status"] == "scheduler_triggered"
+    reads2 = FakeReads(
+        {"id": "a1", "candidateId": "c1", "jobId": "j1", "currentStageId": "s10"},
+        [],
+        [{"id": "s10", "kind": "interview", "name": "R2 Interview"}],
+        candidate={"id": "c1", "email": "cand@test.com"},
+    )
+    monkeypatch.setattr(pipeline, "HarlyReads", lambda *a, **k: reads2)
+    r2 = await pipeline.process_stage_change(runtime, {"applicationId": "a1"}, event_id="e2")
+    assert r2["status"] == "scheduler_triggered"
+    rows = await _scheduler_rows(factory)
+    assert {(r.stage_id, r.status, r.cominty_thread_id) for r in rows} == {
+        ("s9", "superseded", "thr_1"),
+        ("s10", "open", "thr_2"),
+    }
 
 
 async def test_stage_change_notes_missing_plan_and_email(factory, monkeypatch) -> None:

@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+import asyncio
+
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recruitment_db.models import ConversationThread, Employee, SchedulerThread, SchedulerTrigger
 
 MIN_HM_GRADE = 7  # hiring managers are employees with grade *above* this
+
+_app_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_app_lock(application_id: str) -> asyncio.Lock:
+    """Process-local mutex serializing scheduler runs per application.
+
+    One uvicorn worker serves the bridge, so this holds across the poll loop
+    and webhook handlers: a stage advance never overlaps an in-flight
+    follow-up run for the same candidate. Demo scale keeps every lock forever;
+    a bigger deployment would evict idle entries.
+    """
+    lock = _app_locks.get(application_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _app_locks[application_id] = lock
+    return lock
 
 
 async def is_hiring_manager(session: AsyncSession, slack_user_id: str) -> bool:
@@ -114,6 +133,21 @@ async def delete_scheduler_trigger(
             )
         )
         await session.commit()
+
+
+async def supersede_app_threads(session: AsyncSession, *, application_id: str, except_thread_id: str) -> int:
+    """Mark older open coordinations for an app superseded. Returns the count."""
+    result = await session.execute(
+        update(SchedulerThread)
+        .where(
+            SchedulerThread.application_id == application_id,
+            SchedulerThread.status == "open",
+            SchedulerThread.cominty_thread_id != except_thread_id,
+        )
+        .values(status="superseded")
+    )
+    await session.commit()
+    return result.rowcount
 
 
 async def get_open_scheduler_thread(
